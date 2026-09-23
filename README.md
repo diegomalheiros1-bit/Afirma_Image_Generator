@@ -1,4 +1,4 @@
-# Projeto Gerador de Imagens em Lote
+# Afirma Image Generator
 
 ## Objetivo
 
