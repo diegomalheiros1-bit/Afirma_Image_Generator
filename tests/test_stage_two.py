@@ -9,9 +9,10 @@ from openpyxl import Workbook, load_workbook
 from main import main
 from src.excel_reader import load_config
 from src.file_manager import validate_output_path
+from support import IsolatedTest
 
 
-class StageTwoTests(unittest.TestCase):
+class StageTwoTests(IsolatedTest):
     def make_queue(self, root, dry_run="SIM", limit=2):
         input_dir = root / "input"
         input_dir.mkdir()
@@ -72,7 +73,7 @@ class StageTwoTests(unittest.TestCase):
             book = load_workbook(queue)
             sheet = book["Fila_Geracao"]
             self.assertEqual([sheet[f"F{i}"].value for i in range(2, 6)],
-                             ["ERRO", "CONCLUIDO", "CONCLUIDO", "PENDENTE"])
+                             ["PENDENTE", "PENDENTE", "PENDENTE", "PENDENTE"])
             self.assertEqual(book["Configuracao"]["B3"].value, "resultados")
             book.close()
             self.assertEqual(list(output.iterdir()), [output / "1.png"])

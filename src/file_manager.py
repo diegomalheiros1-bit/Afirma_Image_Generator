@@ -25,7 +25,7 @@ def validate_reference_paths(reference_dir: Path, filenames: str) -> tuple[Path,
     return tuple(validate_reference_path(reference_dir, name) for name in names)
 
 
-def validate_output_path(result_dir: Path, filename: str) -> Path:
+def validate_output_path(result_dir: Path, filename: str, *, check_exists=True) -> Path:
     if not filename or filename in (".", ".."):
         raise ValueError("Nome_Saida não informado ou inválido.")
     if (Path(filename).name != filename or
@@ -36,7 +36,7 @@ def validate_output_path(result_dir: Path, filename: str) -> Path:
              *(f"LPT{i}" for i in range(1, 10))}):
         raise ValueError(f"Nome_Saida inválido: {filename}")
     path = result_dir / filename
-    if path.exists():
+    if check_exists and (path.exists() or path.is_symlink()):
         raise FileExistsError(f"Arquivo de saída já existe: {path}")
     return path
 
@@ -49,11 +49,11 @@ def output_paths(result_dir: Path, filename: str, quantity: int) -> tuple[Path, 
     return tuple(validate_output_path(result_dir, name) for name in names)
 
 
-def openai_output_paths(result_dir: Path, filename: str, quantity: int) -> tuple[Path, ...]:
+def openai_output_paths(result_dir: Path, filename: str, quantity: int, *, check_exists=True) -> tuple[Path, ...]:
     base = Path(filename)
     if base.suffix.lower() != ".png":
         raise ValueError("Nome_Saida deve terminar em .png para OpenAI.")
-    validate_output_path(result_dir, filename)
+    validate_output_path(result_dir, filename, check_exists=check_exists)
     names = ([filename] if quantity == 1 else
              [f"{base.stem}_{number:02d}.png" for number in range(1, quantity + 1)])
-    return tuple(validate_output_path(result_dir, name) for name in names)
+    return tuple(validate_output_path(result_dir, name, check_exists=check_exists) for name in names)

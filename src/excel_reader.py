@@ -3,6 +3,7 @@ import os
 import tempfile
 import pandas as pd
 from openpyxl import load_workbook
+from src.execution_state import PersistenceError
 
 REQUIRED_COLUMNS = [
     "ID",
@@ -66,6 +67,16 @@ def load_queue(path: Path) -> pd.DataFrame:
 
 
 def save_queue(df: pd.DataFrame, path: Path) -> None:
+    try:
+        _save_queue(df, path)
+    except Exception:
+        raise PersistenceError(
+            "Não foi possível salvar o Excel (arquivo aberto, permissão ou disco). "
+            "Novas gerações interrompidas; feche o Excel e preserve o .state.json."
+        ) from None
+
+
+def _save_queue(df: pd.DataFrame, path: Path) -> None:
     """Update queue cells while retaining all other sheets and workbook content."""
     workbook = load_workbook(path)
     sheet = workbook["Fila_Geracao"]

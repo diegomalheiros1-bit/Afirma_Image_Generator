@@ -7,9 +7,10 @@ from openpyxl import Workbook, load_workbook
 from main import is_pending, main
 from src.file_manager import validate_reference_path
 from src.prompt_builder import build_prompt
+from support import IsolatedTest
 
 
-class QueueTests(unittest.TestCase):
+class QueueTests(IsolatedTest):
     def test_prompt(self):
         self.assertEqual(build_prompt(" base ", " variante "), "base\n\nvariante")
         with self.assertRaises(ValueError):
@@ -58,11 +59,13 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(result.sheetnames, ["Fila_Geracao", "Configuracao"])
             self.assertEqual(result["Configuracao"]["A1"].value, "Parametro")
             rows = result["Fila_Geracao"]
-            self.assertEqual((rows["F2"].value, rows["G2"].value), ("ERRO", 1))
-            self.assertEqual((rows["F3"].value, rows["G3"].value), ("CONCLUIDO", 1))
+            self.assertEqual((rows["F2"].value, rows["G2"].value), ("PENDENTE", 0))
+            self.assertEqual((rows["F3"].value, rows["G3"].value), ("PENDENTE", 0))
             self.assertEqual((rows["F4"].value, rows["G4"].value), ("CONCLUIDO", 1))
             main(queue, references)
-            self.assertEqual(load_workbook(queue)["Fila_Geracao"]["G3"].value, 1)
+            reloaded = load_workbook(queue)
+            self.assertEqual(reloaded["Fila_Geracao"]["G3"].value, 0)
+            reloaded.close()
             result.close()
 
 

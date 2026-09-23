@@ -15,6 +15,9 @@ from src.file_manager import openai_output_paths
 from src.generation_job import GenerationJob
 from src.image_generator import OpenAIImageGenerator
 import test_stage_three
+from support import IsolatedTest, png_bytes
+import httpx
+from openai import RateLimitError, BadRequestError
 
 
 class FakeImages:
@@ -31,7 +34,7 @@ class FakeImages:
                                      for x in result])
 
 
-class OpenAITests(unittest.TestCase):
+class OpenAITests(IsolatedTest):
     def test_first_real_run_preflight_blocks_unsafe_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -41,7 +44,7 @@ class OpenAITests(unittest.TestCase):
             book["Configuracao"]["B4"] = 1
             book.save(queue)
             book.close()
-            safe = {"IMAGE_PROVIDER": "openai", "DRY_RUN": "NAO",
+            safe = {"IMAGE_PROVIDER": "openai", "DRY_RUN": "NAO", "FIRST_RUN_SAFE_MODE": "SIM",
                     "MAX_JOBS_PER_RUN": "1", "MAX_IMAGES_PER_RUN": "1"}
             with patch.dict(os.environ, {**safe, "OPENAI_API_KEY": ""}):
                 with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
@@ -51,37 +54,36 @@ class OpenAITests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "limites"):
                         main(queue)
                 (refs / "ok.png").unlink()
-                with self.assertRaisesRegex(FileNotFoundError, "ok.png"):
-                    main(queue)
+                self.assertEqual(main(queue)["errors"], 1)
                 (refs / "ok.png").touch()
                 book = load_workbook(queue)
+                book["Fila_Geracao"]["F2"] = "PENDENTE"
                 book["Fila_Geracao"]["E2"] = "bad?.png"
                 book.save(queue)
                 book.close()
-                with self.assertRaisesRegex(ValueError, "Nome_Saida"):
-                    main(queue)
+                self.assertEqual(main(queue)["errors"], 1)
             book = load_workbook(queue)
-            self.assertEqual(book["Fila_Geracao"]["F2"].value, "PENDENTE")
+            self.assertEqual(book["Fila_Geracao"]["F2"].value, "ERRO")
             book.close()
 
     def test_api_inputs_retry_and_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             ref1, ref2 = root / "a.png", root / "b.jpg"
-            ref1.touch()
-            ref2.touch()
+            ref1.write_bytes(png_bytes())
+            ref2.write_bytes(png_bytes())
             paths = openai_output_paths(root, "imagem_001.png", 3)
-            job = GenerationJob(1, "prompt", (ref1, ref2), "imagem_001.png", "PROCESSANDO", 1,
+            job = GenerationJob(1, "prompt\n\nEvitar: texto", (ref1, ref2), "imagem_001.png", "PROCESSANDO", 1,
                                 quantidade=3, saidas=paths, prompt_negativo="texto")
-            class TemporaryError(Exception):
-                pass
-            api = FakeImages([TemporaryError("secret"), [b"one", b"two", b"three"]])
+            error = RateLimitError("secret", response=httpx.Response(429, request=httpx.Request("POST", "https://example.test")),
+                                   body={"code": "rate_limit_exceeded"})
+            api = FakeImages([error, [png_bytes()] * 3])
             generator = OpenAIImageGenerator(client=SimpleNamespace(images=api),
-                                             retryable_errors=(TemporaryError,), retries=1)
+                                             sleep=lambda seconds: None, retries=1)
             self.assertEqual(generator.generate(job), paths)
             self.assertEqual([p.name for p in paths],
                              ["imagem_001_01.png", "imagem_001_02.png", "imagem_001_03.png"])
-            self.assertEqual([p.read_bytes() for p in paths], [b"one", b"two", b"three"])
+            self.assertEqual([p.read_bytes() for p in paths], [png_bytes()] * 3)
             self.assertEqual(len(api.calls), 2)
             self.assertEqual(api.calls[0]["n"], 3)
             self.assertEqual(api.calls[0]["output_format"], "png")
@@ -103,9 +105,9 @@ class OpenAITests(unittest.TestCase):
                 def edit(self, **kwargs):
                     self.calls += 1
                     if self.calls == 1:
-                        raise ValueError("sensitive payload")
+                        raise BadRequestError("sensitive payload", response=httpx.Response(400, request=httpx.Request("POST", "https://example.test")), body={})
                     return SimpleNamespace(data=[SimpleNamespace(
-                        b64_json=base64.b64encode(b"image").decode())])
+                        b64_json=base64.b64encode(png_bytes()).decode())])
             api = BadAPI()
             generator = OpenAIImageGenerator(client=SimpleNamespace(images=api))
             with patch.dict(os.environ, {"IMAGE_PROVIDER": "openai", "MAX_JOBS_PER_RUN": "2",
@@ -121,7 +123,7 @@ class OpenAITests(unittest.TestCase):
                 self.assertNotIn("sensitive payload", book["Fila_Geracao"]["H2"].value)
                 self.assertEqual(book["Fila_Geracao"]["F3"].value, "CONCLUIDO")
                 book.close()
-                self.assertEqual((root / "output" / "imagens" / "two.png").read_bytes(), b"image")
+                self.assertEqual((root / "output" / "resultados" / "two.png").read_bytes(), png_bytes())
 
                 book = load_workbook(queue)
                 book["Configuracao"]["B5"] = "SIM"

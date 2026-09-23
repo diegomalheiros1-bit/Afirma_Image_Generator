@@ -1,216 +1,205 @@
 # Afirma Image Generator
 
-## Objetivo
-
-Automatizar a preparação e execução de gerações de imagens a partir de uma planilha Excel.
-
-O cenário principal é:
-- um prompt técnico padrão;
-- uma variação por imagem;
-- uma imagem de referência local;
-- execução em lote;
-- salvamento organizado;
-- controle de status por linha.
-
-## Fluxo do MVP
-
-Excel -> Python -> validação -> montagem do prompt -> DRY RUN ou simulação.
-
-Nesta versão inicial **nenhuma API de imagem é chamada**.
-
-## Estrutura
-
-```text
-projeto-gerador-imagens/
-├── main.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-├── README.md
-├── CODEX_PROMPT.md
-├── src/
-│   ├── excel_reader.py
-│   ├── prompt_builder.py
-│   ├── image_generator.py
-│   ├── file_manager.py
-│   └── logger.py
-├── input/
-│   ├── fila.xlsx
-│   └── referencias/
-├── output/
-│   └── imagens/
-└── logs/
-```
-
-## Status suportados
-
-- PENDENTE
-- PROCESSANDO
-- CONCLUIDO
-- ERRO
+MVP Python para gerar imagens a partir de Excel, combinando prompt padrão,
+variação e referências de modelo/produto. Processamento sequencial e local.
+O script depende de um processo ativo: fechar o terminal, desligar o computador
+ou interromper o Python interrompe o lote. Não há serviço em segundo plano.
 
 ## Instalação
 
-```bash
+Requer Python 3.11 ou superior. Na raiz do projeto, em PowerShell:
+
+```powershell
 python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Windows:
+Se ainda não houver `.env`, copie `.env.example` para `.env`.
+Preencha `OPENAI_API_KEY` apenas nesse arquivo ou na variável de ambiente.
+Nunca coloque a chave no Excel, no código, nos logs ou em commits.
+O ambiente tem precedência sobre o `.env`; `DRY_RUN` tem precedência sobre
+`Dry_Run` da aba `Configuracao`. Feche o Excel antes de executar o programa.
 
-```bash
-.venv\Scripts\activate
-```
+## Planilha e referências
 
-Instale as dependências:
+A aba `Fila_Geracao` requer `ID`, `Prompt_Padrao`, `Prompt_Variacao`,
+`Arquivo_Referencia`, `Nome_Saida`, `Status`, `Tentativas` e `Observacao`.
+IDs devem ser únicos, preenchidos e estáveis. Não altere IDs para contornar
+uma tarefa bloqueada: eles ligam a linha ao histórico da geração.
 
-```bash
-pip install -r requirements.txt
-```
+Colunas opcionais: `Tema`, `Produto`, `Cliente`, `Prompt_Negativo`, `Quantidade`
+e `Observacao_Usuario`. Quantidade ausente/vazia significa 1; deve ser inteira
+positiva. Na OpenAI, use de 1 a 10 por job.
 
-## Uso
+`Arquivo_Referencia` aceita `modelo.jpg;produto.png`, preservando a ordem.
+Todas as referências devem existir sob a pasta configurada. PNG, JPEG/JPG e
+WEBP são aceitos. Antes da chamada real, o conteúdo também é validado como
+imagem; OpenAI aceita até 16 referências, cada uma menor que 50 MB.
 
-1. Coloque as imagens de referência em `input/referencias/`.
-2. Atualize `input/fila.xlsx`.
-3. Execute:
+`Nome_Saida` deve ser um nome de arquivo, sem subpastas. Na OpenAI, use `.png`.
+Para quantidade 1, `imagem_001.png` é preservado; para 3, as saídas são
+`imagem_001_01.png`, `imagem_001_02.png` e `imagem_001_03.png`.
+Arquivos existentes nunca são sobrescritos. Os arquivos reais ficam em
+`Pasta_Resultados`, inclusive com o provider OpenAI.
 
-```bash
+A aba `Configuracao` usa as colunas `Parametro` e `Valor`:
+
+| Parâmetro | Significado |
+| --- | --- |
+| Pasta_Referencias | Relativa à pasta do Excel, por exemplo `referencias` |
+| Pasta_Resultados | Relativa a `output/` na pasta pai de `input/`, por exemplo `imagens` |
+| Limite_Por_Execucao | Máximo de jobs por execução, inteiro positivo |
+| Dry_Run | SIM/NAO; padrão SIM, usado se DRY_RUN não estiver definido |
+
+Caminhos absolutos também são aceitos. `Modelo_API`, `Qualidade` e
+`Prompt_Sistema` legados na planilha não são usados: modelo e qualidade vêm
+das variáveis abaixo. `Observacao` é controle do programa;
+`Observacao_Usuario` contém a orientação do usuário.
+
+## Prompt enviado
+
+O texto contém `Prompt_Padrao`, uma linha em branco e `Prompt_Variacao`.
+Quando preenchidos, acrescenta blocos identificados: `Tema:`, `Produto:`,
+`Observação do usuário:` e `Evitar:` (Prompt_Negativo). O campo Cliente fica
+como metadado e não é enviado. O DRY RUN mostra exatamente esse texto.
+
+## Configuração e limites
+
+| Variável | Padrão no código | Uso |
+| --- | --- | --- |
+| IMAGE_PROVIDER | simulation | simulation, mock ou openai |
+| DRY_RUN | Valor do Excel | SIM impede API, arquivos de saída e escrita na planilha |
+| FIRST_RUN_SAFE_MODE | SIM | Exige os três limites de execução <= 1 para geração real |
+| MAX_JOBS_PER_RUN | 1 | Máximo de jobs selecionados |
+| MAX_IMAGES_PER_RUN | 1 | Soma máxima das quantidades selecionadas |
+| OPENAI_API_KEY | Sem padrão | Necessária somente para chamada real |
+| OPENAI_IMAGE_MODEL | gpt-image-2.5-sunburst | Modelo validado neste MVP |
+| OPENAI_IMAGE_QUALITY | auto | auto, low, medium, high, xhigh, max |
+| OPENAI_TIMEOUT_SECONDS | 120 | Timeout positivo por chamada |
+| OPENAI_RETRIES | 2 | Novas tentativas, de 0 a 5; além da chamada inicial |
+
+O limite de jobs é o menor entre MAX_JOBS_PER_RUN e Limite_Por_Execucao.
+Uma linha que não cabe no saldo de imagens é ignorada com motivo no console;
+linhas posteriores menores ainda podem ser selecionadas. Linhas excedentes
+permanecem PENDENTE. Retries não aumentam o número de imagens planejadas,
+mas aumentam o contador de chamadas à API.
+
+FIRST_RUN_SAFE_MODE é uma trava explícita, não um detector automático de
+primeira execução. Para liberar lotes, configure `FIRST_RUN_SAFE_MODE=NAO`.
+O programa imprime provider, jobs encontrados, imagens previstas e limites.
+
+## Simulação e mock
+
+```powershell
 python main.py
-```
-
-4. Veja o resultado no Excel e em `logs/processamento.log`.
-
-## Configuração
-
-Na aba `Configuracao` de `input/fila.xlsx`, preencha `Pasta_Referencias`,
-`Pasta_Resultados` e `Limite_Por_Execucao`. O limite deve ser um inteiro positivo.
-Pastas relativas são resolvidas a partir de `input/` para referências e de
-`output/` para resultados. Caminhos absolutos também são aceitos.
-
-`Dry_Run` aceita `SIM` ou `NAO` e usa `SIM` se a linha estiver ausente. Em DRY RUN,
-o console mostra ID, prompt final, referência e nome de saída. A planilha não é
-alterada. Com `NAO`, o programa valida e marca os itens como `CONCLUIDO` em uma
-simulação, sem gerar imagens. Erros são marcados como `ERRO` nesse modo.
-
-## Referências e jobs
-
-`Arquivo_Referencia` aceita um ou mais nomes separados por `;`, por exemplo
-`modelo.jpg;produto.webp`. Todos devem existir na pasta de referências e ter
-extensão PNG, JPG, JPEG ou WEBP. O erro identifica o arquivo ausente.
-
-As colunas opcionais `Tema`, `Produto`, `Cliente`, `Prompt_Negativo`, `Quantidade`
-e `Observacao_Usuario` são lidas para o `GenerationJob`; a planilha antiga segue
-válida. `Quantidade` deve ser um inteiro positivo e usa 1 quando vazia ou ausente.
-Com mais de uma imagem, `nome.png` produz `nome_001.png`, `nome_002.png` etc.
-
-`src/generation_job.py` define o job; `src/image_generator.py` define a interface
-abstrata `ImageGenerator` e o `MockImageGenerator`. Para exercitar o fluxo completo
-com arquivos fictícios, defina `Dry_Run=NAO` e execute:
-
-```bash
 python main.py --mock
 ```
 
-O mock grava conteúdo de teste, não imagens válidas. Arquivos existentes impedem
-o processamento do respectivo job e nunca são sobrescritos. Sem `--mock`, a
-execução com `Dry_Run=NAO` continua apenas simulando sucesso, sem criar arquivos.
+`simulation` valida sem gerar arquivos. `mock` cria arquivos fictícios em
+`Pasta_Resultados/_mock/<execucao>/`, sem conflitar com futuras imagens reais.
+Ambos preservam a planilha, inclusive PENDENTE e Tentativas, mesmo em falhas.
+`--mock` seleciona o mock, mas não desativa DRY_RUN.
+Sucesso no resumo desses modos significa validação/simulação bem-sucedida,
+não uma imagem gerada. DRY RUN não altera o Excel nem o registro de execução;
+o arquivo de lock local e o log podem ser criados.
 
-## OpenAI Image API
+## Validar primeiro uma imagem real
 
-Copie `.env.example` para `.env` e configure `IMAGE_PROVIDER=openai`. Defina
-`OPENAI_API_KEY` no ambiente ou no `.env`; mantenha `.env` fora do controle de
-versão. A chave nunca deve ser colocada na planilha. Para usar arquivos fictícios,
-configure `IMAGE_PROVIDER=mock`. Sem `IMAGE_PROVIDER`, a execução mantém a
-simulação local anterior. O argumento `--mock` também permite executar o mock.
+1. Coloque uma referência válida em `input/referencias/produto.png`.
+2. Na planilha, preencha uma linha com ID único, prompt, referência
+   `produto.png`, saída nova `teste_001.png`, Status=PENDENTE, Tentativas=0
+   e Quantidade=1 (ou deixe a coluna ausente). Defina Limite_Por_Execucao=1
+   e confira Pasta_Resultados (por exemplo, `imagens`).
+3. No `.env`, configure IMAGE_PROVIDER=openai, DRY_RUN=SIM,
+   FIRST_RUN_SAFE_MODE=SIM, MAX_JOBS_PER_RUN=1 e MAX_IMAGES_PER_RUN=1.
+4. Execute `python main.py` e confira o prompt completo e caminhos.
+5. Configure a chave e verifique saldo/acesso da conta. Mude apenas
+   DRY_RUN=NAO e execute `python main.py`. Essa etapa faz uma chamada paga.
+6. Confira a imagem na pasta configurada e o status CONCLUIDO. Em caso de
+   falha, use a orientação de recuperação antes de repetir.
 
-Configure `Dry_Run=SIM` na planilha para revisar os jobs sem chamada externa.
-`DRY_RUN` no `.env`, quando definido, tem prioridade sobre a aba `Configuracao`.
-Com `Dry_Run=NAO` e `IMAGE_PROVIDER=openai`, `python main.py` usa o endpoint de
-edição de imagens, pois cada job tem uma ou mais referências. O modelo padrão é
-`gpt-image-2.5-sunburst`; `OPENAI_IMAGE_MODEL` permite escolher outro modelo
-compatível. `OPENAI_IMAGE_QUALITY` usa `auto` por padrão. A saída real é PNG em
-`output/imagens/`. Com quantidade maior que 1, `imagem_001.png` produz
-`imagem_001_01.png`, `imagem_001_02.png` etc. O endpoint aceita até 10 imagens
-de saída e 16 referências por chamada.
+## Validar um lote pequeno
 
-`MAX_JOBS_PER_RUN` e `MAX_IMAGES_PER_RUN` limitam cada execução (padrões 10 e 20).
-Antes de processar, o console mostra provider, jobs encontrados, imagens previstas
-e limites. `OPENAI_TIMEOUT_SECONDS` e `OPENAI_RETRIES` controlam timeout e novas
-tentativas em erros temporários. Falhas são marcadas como `ERRO`, com incremento
-de `Tentativas`; os jobs seguintes continuam. Os testes usam clientes falsos e
-não fazem chamadas à API nem consomem créditos.
+Após verificar visualmente a primeira imagem, crie duas linhas novas, com
+IDs e saídas distintos, Quantidade=1 e Status=PENDENTE. Configure
+FIRST_RUN_SAFE_MODE=NAO, MAX_JOBS_PER_RUN=2, MAX_IMAGES_PER_RUN=2 e
+Limite_Por_Execucao=2. Execute com DRY_RUN=SIM. Depois de conferir o plano,
+mude para DRY_RUN=NAO e execute novamente. Mantenha o terminal ativo.
 
-Implementação baseada no [guia oficial de geração de imagens](https://developers.openai.com/api/docs/guides/image-generation)
-e na [referência oficial de edição](https://developers.openai.com/api/reference/cli/resources/images/methods/edit).
+## Persistência e recuperação
 
-## Primeiro teste com OpenAI
+Além do Excel, cada fila tem um arquivo `fila.xlsx.state.json` junto dela.
+Ele guarda ID, fase, tentativas da tarefa e da API, caminhos e hashes das
+entradas/saídas. Não armazena prompts, binários ou credenciais. Preserve esse
+arquivo junto da planilha em backups; perdê-lo remove evidências necessárias
+para uma recuperação segura. O arquivo `fila.xlsx.lock` usa trava do sistema
+operacional; duas instâncias não podem executar a mesma fila simultaneamente.
+A trava é liberada ao encerrar o processo, inclusive por falha. Não apague o
+arquivo de lock enquanto houver processos ativos. Use disco local; travas de
+pastas de rede/sincronização não são garantidas por este MVP.
 
-O projeto vem com `.env` inicial sem chave. Para o primeiro teste, mantenha:
+O programa grava `prepared`, salva PROCESSANDO no Excel e somente então pode
+chamar a API. Antes de cada chamada, grava `in_flight`. Após salvar e validar
+todos os PNGs, grava `files_ready` com hashes e só então grava CONCLUIDO.
+Falha no Excel ou no registro interrompe novas gerações. Não existe um save
+incondicional no finally que possa ocultar o erro original.
 
-```dotenv
-IMAGE_PROVIDER=openai
-DRY_RUN=SIM
-MAX_JOBS_PER_RUN=1
-MAX_IMAGES_PER_RUN=1
-OPENAI_IMAGE_MODEL=gpt-image-2.5-sunburst
-```
+| Situação | Recuperação |
+| --- | --- |
+| Excel aberto, permissão ou disco cheio | Feche o Excel, corrija o acesso/espaço, preserve arquivos e registro e execute novamente |
+| Registro prepared | Nenhuma chamada começou; retorna automaticamente a PENDENTE |
+| Registro files_ready e arquivos/hashes conferem | Recupera CONCLUIDO sem API, mesmo se o Excel ficou PROCESSANDO |
+| Registro files_ready divergente ou arquivos ausentes | REVISAO; restaure os arquivos/planilha/configuração originais a partir do backup e reexecute |
+| Registro rejected / status ERRO | Chamada rejeitada sem resultado; corrija quota/parâmetros e, se desejar tentar novamente, altere ERRO para PENDENTE |
+| in_flight, uncertain ou PROCESSANDO sem registro | REVISAO; não reenvia automaticamente, mesmo se alguém mudar para PENDENTE |
+| Arquivo já existente sem registro confirmado | Não sobrescreve nem assume sucesso; confira sua origem antes de mover/renomear |
+| Registro ilegível | Interrompe; restaure um backup íntegro, não apague para forçar execução |
 
-No `.env`, essas quatro primeiras variáveis de controle são necessárias para o
-primeiro teste. `OPENAI_API_KEY` precisa ter valor antes da execução real; pode
-estar no `.env` ou como variável de ambiente. `OPENAI_IMAGE_MODEL` é opcional e
-usa `gpt-image-2.5-sunburst` por padrão. `OPENAI_IMAGE_QUALITY`,
-`OPENAI_TIMEOUT_SECONDS` e `OPENAI_RETRIES` são opcionais, com padrões `auto`,
-`120` e `2`. Nunca coloque o valor da chave na planilha, em logs ou no README.
+Para REVISAO por resposta perdida, consulte o resultado/uso da execução na
+conta antes de decidir. Se não for possível comprovar se houve geração,
+mantenha bloqueado. O MVP não consegue recuperar a resposta perdida da API.
+Somente após confirmação de que não houve resultado ou uma decisão consciente
+de pagar por uma nova geração, arquive Excel, registro e arquivos; remova
+manualmente apenas a entrada daquele ID no JSON e retorne a linha a PENDENTE.
+Não apague o registro inteiro: ele protege as outras tarefas de duplicação.
 
-1. Copie uma imagem PNG, JPG, JPEG ou WEBP para `input/referencias/`, por exemplo
-   `produto.png`.
-2. Na aba `Fila_Geracao` de `input/fila.xlsx`, deixe apenas a linha desejada como
-   `PENDENTE`. Preencha `Arquivo_Referencia` com `produto.png`, `Nome_Saida` com
-   um nome novo terminado em `.png`, por exemplo `teste_001.png`, e
-   `Prompt_Padrao` e/ou `Prompt_Variacao`. Se houver `Quantidade`, use `1`.
-3. Na aba `Configuracao`, confira `Pasta_Referencias=referencias` e
-   `Limite_Por_Execucao=1`. Execute `python main.py` com `DRY_RUN=SIM`. Confira
-   ID, prompt, referência e saída no console; nenhuma API será chamada e a
-   linha continuará `PENDENTE`.
-4. Para a primeira execução real, configure `OPENAI_API_KEY` no ambiente ou no
-   `.env`, mantenha ambos os limites em `1`, mude `DRY_RUN=NAO` no `.env` e
-   execute `python main.py`. O programa valida chave, referência e nome de
-   saída antes de criar o cliente. O resultado será salvo em `output/imagens/`.
+CONCLUIDO legado, produzido pelas versões antigas em simulação, não é prova
+de imagem real. Confira os arquivos antes de redefinir manualmente esses itens.
+`Tentativas` no Excel conta execuções reais da tarefa que chegaram ao estado
+PROCESSANDO. O JSON registra separadamente cada tentativa de chamada à API.
 
-O primeiro teste real é bloqueado se qualquer limite exceder 1, se a chave
-estiver ausente, se a referência faltar ou se o nome de saída for inválido ou
-já existir. Verifique a disponibilidade do modelo na sua conta antes de
-autorizar uma chamada paga.
+Retries automáticos têm espera exponencial com pequena variação aleatória e
+respeitam Retry-After. Apenas rejeições temporárias identificadas (429 com
+rate_limit_exceeded/slow_down, ou 503 com server_is_overloaded) são repetidas.
+Espera indicada acima de 60 segundos adia a tarefa, sem antecipar a chamada.
+Quota, autenticação e parâmetros não são repetidos. Timeout, falha de conexão,
+resposta inválida e falhas com resultado incerto exigem revisão. Isso reduz
+reenvios pagos; a API não oferece aqui uma garantia de execução exatamente uma vez.
 
-O limite seleciona os primeiros itens `PENDENTE` na ordem da planilha. O resumo
-mostra processados, sucessos, erros e ignorados; ignorados inclui todas as linhas
-não selecionadas, inclusive as que já estavam concluídas. Um nome de saída vazio,
-inválido ou já existente na pasta de resultados causa erro na linha.
+## Arquitetura e testes
 
-## Testes
+`main.py` seleciona jobs e coordena estados; `src/execution_state.py` contém
+trava, registro atômico e verificação de arquivos. `src/excel_reader.py`
+preserva as demais abas e salva Excel por substituição atômica.
+`src/generation_job.py` representa o job; `src/prompt_builder.py` monta o
+texto; `src/file_manager.py` valida os caminhos. `src/image_generator.py`
+define a interface, o mock e o provider OpenAI.
 
-Depois de instalar as dependências, execute na raiz do projeto:
-
-```bash
+```powershell
 python -m unittest discover -s tests -v
 ```
 
-Os testes usam uma planilha temporária e não modificam `input/fila.xlsx`.
+Testes usam pastas temporárias, clientes falsos e espera simulada; não leem o
+`.env` real nem consomem créditos. A suíte bloqueia a criação do cliente de rede.
+Cobre limites, simulação seguida de geração, interrupção, Excel bloqueado,
+concorrência entre processos, prompt, retries e recuperação sem reenvio.
 
-## Regras de confiabilidade
+Documentação oficial consultada em 23/09/2026:
+[edição de imagens](https://developers.openai.com/api/reference/cli/resources/images/methods/edit)
+e [rate limits e retries](https://developers.openai.com/api/docs/guides/rate-limits).
+Usamos `images.edit`, modelo gpt-image-2.5-sunburst, saída PNG e retorno base64.
+Outros modelos são rejeitados até validar seus parâmetros. Acesso do projeto,
+saldo e qualidade visual só podem ser confirmados em teste real autorizado.
 
-- Só processar linhas `PENDENTE`.
-- Não interromper toda a fila quando uma linha falhar.
-- Marcar linha problemática como `ERRO`.
-- Incrementar tentativas.
-- Permitir reexecução sem reprocesar itens `CONCLUIDO`.
-- Não salvar chave de API dentro da planilha.
-- Não sobrescrever saída silenciosamente na fase de geração real.
-
-## Próximas fases
-
-1. Validar com imagens reais do cliente.
-2. Implementar integração com API de imagem.
-3. Salvar resultados em `output/imagens/`.
-5. Adicionar retry configurável.
-6. Adicionar estimativa de custo.
-7. Avaliar criação de interface gráfica ou `.exe`.
+Não inclui interface gráfica, executável, serviço ou estimativa monetária.

@@ -7,14 +7,15 @@ from openpyxl import Workbook, load_workbook
 from main import main
 from src.file_manager import validate_reference_paths
 from src.image_generator import ImageGenerator, MockImageGenerator
+from support import IsolatedTest, png_bytes
 
 
-class StageThreeTests(unittest.TestCase):
+class StageThreeTests(IsolatedTest):
     def make_queue(self, root, rows, optional=False, dry_run="NAO"):
         references = root / "input" / "referencias"
         references.mkdir(parents=True)
         for name in ("modelo.jpg", "produto.webp", "ok.png"):
-            (references / name).touch()
+            (references / name).write_bytes(png_bytes())
         output = root / "output" / "resultados"
         output.mkdir(parents=True)
         queue = root / "input" / "fila.xlsx"
@@ -62,12 +63,12 @@ class StageThreeTests(unittest.TestCase):
             queue, _, output = self.make_queue(root, rows, optional=True)
             summary = main(queue, generator=MockImageGenerator())
             self.assertEqual((summary["success"], summary["errors"]), (2, 1))
-            self.assertEqual(sorted(p.name for p in output.iterdir()),
+            self.assertEqual(sorted(p.name for p in output.rglob("*.png")),
                              ["first_001.png", "first_002.png", "first_003.png", "third.png"])
             book = load_workbook(queue)
             self.assertEqual([book["Fila_Geracao"][f"F{i}"].value for i in (2, 3, 4)],
-                             ["CONCLUIDO", "ERRO", "CONCLUIDO"])
-            self.assertIn("missing.jpeg", book["Fila_Geracao"]["H3"].value)
+                             ["PENDENTE", "PENDENTE", "PENDENTE"])
+            self.assertIsNone(book["Fila_Geracao"]["H3"].value)
             book.close()
 
     def test_collision_and_mock_failure_do_not_overwrite(self):

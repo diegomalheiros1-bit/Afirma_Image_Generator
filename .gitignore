@@ -8,3 +8,8 @@ output/imagens/*
 logs/*.log
 input/referencias/*
 !input/referencias/.gitkeep
+*.xlsx.lock
+*.xlsx.state.json
+output/**
+!output/imagens/
+!output/imagens/.gitkeep
