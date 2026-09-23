@@ -56,7 +56,9 @@ def load_queue(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Planilha não encontrada: {path}")
 
-    df = pd.read_excel(path, sheet_name="Fila_Geracao")
+    # Preserve the Excel cell type: text IDs such as '001' must not become 1.
+    # Text such as 'NA' is valid business content, not a pandas missing marker.
+    df = pd.read_excel(path, sheet_name="Fila_Geracao", dtype=object, keep_default_na=False)
 
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:

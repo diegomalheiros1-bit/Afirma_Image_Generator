@@ -293,7 +293,7 @@ class ReliabilityTests(IsolatedTest):
         self.assertEqual(records["1"]["quality"], "auto")
         self.assertEqual(records["4"]["quality"], "high")
 
-    def test_legacy_record_remains_usable_and_recovers_without_charge(self):
+    def test_legacy_record_without_correspondence_blocks_interrupted_job(self):
         self.run_queue()
         journal = Journal(self.queue)
         for record in journal.records.values():
@@ -306,7 +306,9 @@ class ReliabilityTests(IsolatedTest):
             self.run_queue(generator=OpenAIImageGenerator(
                 client=SimpleNamespace(images=SimpleNamespace(edit=self.edit)), quality="high", sleep=self.sleep))
         self.assertEqual(self.edit.call_count, calls)
-        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "CONCLUIDO")
+        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
+        self.assertIn("legado sem assinatura", load_queue(self.queue).iloc[0]["Observacao"])
+        self.assertEqual(list(load_queue(self.queue)["Status"])[1:], ["CONCLUIDO", "CONCLUIDO"])
         self.assertEqual(save.call_count, 1)
 
     def test_multiple_recoveries_write_excel_once(self):

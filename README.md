@@ -173,28 +173,68 @@ estável. Não trate a sondagem inicial como garantia de escrita futura.
 | --- | --- |
 | Excel aberto, permissão ou disco cheio | Feche o Excel, corrija o acesso/espaço, preserve arquivos e registro e execute novamente |
 | Registro prepared | Nenhuma chamada começou; retorna automaticamente a PENDENTE |
-| Registro files_ready e arquivos/hashes conferem | Recupera CONCLUIDO sem API, mesmo se o Excel ficou PROCESSANDO |
+| Registro files_ready, assinatura compatível e arquivos/hashes conferem | Recupera CONCLUIDO sem API, mesmo se o Excel ficou PROCESSANDO |
+| Registro files_ready sem assinatura da linha | Só preserva CONCLUIDO já existente com saídas íntegras; demais estados ficam REVISAO |
 | Registro files_ready divergente ou arquivos ausentes | REVISAO; restaure os arquivos/planilha/configuração originais a partir do backup e reexecute |
 | Registro rejected / status ERRO | Chamada rejeitada sem resultado; corrija quota/parâmetros e, se desejar tentar novamente, altere ERRO para PENDENTE |
 | in_flight, uncertain ou PROCESSANDO sem registro | REVISAO; não reenvia automaticamente, mesmo se alguém mudar para PENDENTE |
 | Arquivo já existente sem registro confirmado | Não sobrescreve nem assume sucesso; confira sua origem antes de mover/renomear |
 | Registro ilegível | Interrompe; restaure um backup íntegro, não apague para forçar execução |
 
-Registros criados antes dos campos históricos novos continuam utilizáveis.
-Para `files_ready`, a recuperação usa os caminhos e hashes já persistidos e não
-presume que modelo, qualidade ou pasta atuais eram os usados. Como esses
-registros legados não possuem assinatura da linha, eles não permitem provar se
-o conteúdo editável do job foi alterado depois; saídas íntegras são preservadas
-e essa limitação deve ser considerada na revisão manual. Registros novos
-detectam alteração da linha e enviam a tarefa a REVISAO sem nova chamada.
+### Normalização e versões das assinaturas
+
+Novos registros usam `row_fingerprint_version=2`. A assinatura e a construção
+do job compartilham a mesma validação de `Quantidade`: ausente, vazio, 1 e 1.0
+(incluindo texto numérico equivalente) representam uma imagem. Somente valores
+finitos, inteiros e positivos são aceitos; zero, negativos, frações e booleanos
+são rejeitados. Ausências do pandas (`NaN`, `pd.NA`, `NaT`) são tratadas
+explicitamente. Acrescentar uma quantidade vazia não altera o histórico anterior.
+
+IDs de células numéricas inteiras permanecem estáveis entre leituras como int
+ou float. IDs textuais preservam zeros à esquerda: `001` é diferente de `1`.
+Use o tipo **Texto** no Excel para esses IDs; a formatação visual `000` de uma
+célula numérica não cria um ID textual. A leitura também preserva textos como
+`NA`. Prompts, referências e nomes não recebem conversão numérica; apenas
+espaços nas extremidades são removidos, conforme a regra existente. Mudanças
+de conteúdo, espaços internos e quantidade efetiva continuam sendo detectados.
+
+Assinaturas antigas sem versão (ou com versão 1) são conferidas com o algoritmo
+anterior, enumerando somente representações equivalentes da quantidade e de
+IDs originalmente numéricos. A migração exige correspondência com o hash antigo
+e integridade das saídas. O hash original permanece em `row_fingerprint_v1`;
+a versão e a assinatura nova são persistidas atomicamente. Não se adota
+cegamente a linha atual. Divergência, versão desconhecida ou perda de identidade
+exige REVISAO. Uma possível chave antiga convertida (`1` para o atual `001`)
+também bloqueia a tarefa, sem mesclar ou apagar registros. Falha ao persistir
+a migração interrompe novas gerações.
+
+### Registros legados e revisão manual
+
+A integridade de uma imagem não comprova sua correspondência com o prompt.
+Para `files_ready`, usam-se os caminhos e hashes históricos; modelo, qualidade
+e pasta atuais não preenchem dados históricos ausentes. Um registro **sem
+assinatura da linha** não fornece evidência suficiente para confirmar tarefas
+PROCESSANDO, REVISAO ou PENDENTE: ficam REVISAO com uma mensagem específica,
+sem chamada e sem alteração do registro. Voltar manualmente para PENDENTE não
+contorna a proteção.
+
+Uma tarefa já CONCLUIDO com esse registro legado permanece assim somente se
+suas saídas históricas estiverem íntegras. Isso preserva o histórico, mas **não
+certifica que a imagem corresponde à linha atual**. Saída ausente, adulterada
+ou inválida exige REVISAO inclusive nesse caso. Registros com assinatura
+compatível e arquivos verificados continuam recuperando CONCLUIDO sem API.
+Histórico inalterado na versão atual não regrava Excel nem registro; uma
+migração comprovada da versão anterior grava apenas o registro.
 
 Para REVISAO por resposta perdida, consulte o resultado/uso da execução na
 conta antes de decidir. Se não for possível comprovar se houve geração,
 mantenha bloqueado. O MVP não consegue recuperar a resposta perdida da API.
-Somente após confirmação de que não houve resultado ou uma decisão consciente
-de pagar por uma nova geração, arquive Excel, registro e arquivos; remova
-manualmente apenas a entrada daquele ID no JSON e retorne a linha a PENDENTE.
-Não apague o registro inteiro: ele protege as outras tarefas de duplicação.
+Preserve Excel, registro e arquivos e compare com backups da execução original.
+Não apague entradas, não invente hashes e não preencha metadados antigos com a
+configuração atual. Restaure dados originais somente com evidência verificável;
+se faltar comprovação, mantenha REVISAO. Se decidir conscientemente pagar por
+uma nova geração, crie outra linha com ID novo e inequívoco e outro nome de
+saída, mantendo a linha e o registro anteriores para auditoria.
 
 CONCLUIDO legado, produzido pelas versões antigas em simulação, não é prova
 de imagem real. Confira os arquivos antes de redefinir manualmente esses itens.
@@ -213,7 +253,9 @@ reenvios pagos; a API não oferece aqui uma garantia de execução exatamente um
 
 `main.py` seleciona jobs e coordena estados; `src/execution_state.py` contém
 trava, registro atômico e verificação de arquivos. `src/excel_reader.py`
-preserva as demais abas e salva Excel por substituição atômica.
+preserva os tipos das células e as demais abas e salva Excel por substituição
+atômica. `src/job_values.py` compartilha a normalização de valores e validação
+de quantidade entre a montagem dos jobs e as assinaturas, sem dependência circular.
 `src/generation_job.py` representa o job; `src/prompt_builder.py` monta o
 texto; `src/file_manager.py` valida os caminhos. `src/image_generator.py`
 define a interface, o mock e o provider OpenAI.
@@ -226,6 +268,15 @@ Testes usam pastas temporárias, clientes falsos e espera simulada; não leem o
 `.env` real nem consomem créditos. A suíte bloqueia a criação do cliente de rede.
 Cobre limites, simulação seguida de geração, interrupção, Excel bloqueado,
 concorrência entre processos, prompt, retries e recuperação sem reenvio.
+
+Para validar esta revisão no Windows, abra PowerShell na pasta do projeto,
+ative o ambiente com `.\.venv\Scripts\Activate.ps1` (se instalado nesse caminho)
+e execute o comando de testes acima. Para executar somente as regressões de
+histórico: `python -m unittest discover -s tests -p test_history_signatures.py -v`.
+Esses testes criam suas próprias planilhas e registros temporários, incluindo
+a quarta linha com quantidade vazia, migração de assinaturas e revisão legada.
+Não é necessário abrir a planilha do cliente nem executar `main.py` para validar
+essas correções.
 
 Documentação oficial consultada em 23/09/2026:
 [edição de imagens](https://developers.openai.com/api/reference/cli/resources/images/methods/edit)

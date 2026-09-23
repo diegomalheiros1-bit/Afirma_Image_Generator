@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from itertools import product
+from numbers import Real
+from src.job_values import canonical_id, cell_text, parse_quantity
 
 from PIL import Image
 
@@ -129,19 +132,41 @@ def fingerprint(job, model, quality):
     return hashlib.sha256(json.dumps(value, ensure_ascii=True).encode()).hexdigest()
 
 
-def row_fingerprint(row):
-    """Fingerprint editable job fields without interpreting current folders/settings."""
-    fields = ("ID", "Prompt_Padrao", "Prompt_Variacao", "Arquivo_Referencia", "Nome_Saida",
+ROW_FINGERPRINT_VERSION = 2
+ROW_FIELDS = ("ID", "Prompt_Padrao", "Prompt_Variacao", "Arquivo_Referencia", "Nome_Saida",
               "Tema", "Produto", "Cliente", "Prompt_Negativo", "Quantidade", "Observacao_Usuario")
-    values = []
-    for name in fields:
-        value = row.get(name, "")
-        if pd_is_missing(value):
-            value = ""
-        values.append([name, str(value).strip()])
+
+
+def canonical_row(row):
+    values = {name: cell_text(row.get(name)) for name in ROW_FIELDS}
+    values["ID"] = canonical_id(row.get("ID"))
+    values["Quantidade"] = str(parse_quantity(row.get("Quantidade")))
+    return [[name, values[name]] for name in ROW_FIELDS]
+
+
+def _row_hash(values):
     return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
 
 
-def pd_is_missing(value):
-    # Avoid importing pandas in this persistence-only module.
-    return value is None or isinstance(value, float) and value != value
+def row_fingerprint(row):
+    return _row_hash(canonical_row(row))
+
+
+def matches_v1(row, expected):
+    """Prove compatibility against the stored hash, never adopt the current row blindly.
+
+    Only ID numeric representation and equivalent valid quantity representations
+    are enumerated. Every text field must match exactly under the old trim rule.
+    """
+    values = dict(canonical_row(row))
+    quantity = parse_quantity(row.get("Quantidade"))
+    quantities = [str(quantity), f"{quantity}.0"] + ([""] if quantity == 1 else [])
+    ids = [canonical_id(row.get("ID"))]
+    raw_id = row.get("ID")
+    if isinstance(raw_id, Real) and not isinstance(raw_id, bool) and float(raw_id).is_integer():
+        ids.append(f"{int(raw_id)}.0")
+    for id_value, quantity_value in product(ids, quantities):
+        candidate = {**values, "ID": id_value, "Quantidade": quantity_value}
+        if _row_hash([[name, candidate[name]] for name in ROW_FIELDS]) == expected:
+            return True
+    return False

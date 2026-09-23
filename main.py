@@ -2,12 +2,13 @@ from dataclasses import replace
 from pathlib import Path
 import os
 import uuid
-import pandas as pd
 from dotenv import dotenv_values
 
 from src.excel_reader import load_config, load_queue, save_queue
 from src.execution_state import (Journal, PersistenceError, fingerprint, queue_lock,
-                                 row_fingerprint, validate_output_directory, verified_outputs)
+                                 ROW_FINGERPRINT_VERSION, matches_v1, row_fingerprint,
+                                 validate_output_directory, verified_outputs)
+from src.job_values import ambiguous_legacy_key, canonical_id, cell_text, parse_quantity
 from src.prompt_builder import build_prompt
 from src.file_manager import openai_output_paths, output_paths, validate_reference_paths
 from src.generation_job import GenerationJob
@@ -21,22 +22,6 @@ logger = get_logger()
 
 def is_pending(status):
     return isinstance(status, str) and status.strip().upper() == "PENDENTE"
-
-
-def cell_text(value):
-    return "" if pd.isna(value) else str(value).strip()
-
-
-def parse_quantity(value):
-    if pd.isna(value) or str(value).strip() == "":
-        return 1
-    try:
-        quantity = int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError("Quantidade deve ser um inteiro positivo.") from None
-    if quantity <= 0 or str(value).strip() not in (str(quantity), f"{quantity}.0"):
-        raise ValueError("Quantidade deve ser um inteiro positivo.")
-    return quantity
 
 
 def flag(value):
@@ -59,9 +44,9 @@ def make_job(row, config, real):
     name = text("Nome_Saida")
     paths = (openai_output_paths(config["result_dir"], name, quantity, check_exists=False) if real else
              output_paths(config["result_dir"], name, quantity))
-    attempts = 0 if pd.isna(row["Tentativas"]) else int(row["Tentativas"])
+    attempts = 0 if not cell_text(row["Tentativas"]) else int(row["Tentativas"])
     return GenerationJob(
-        id=text("ID"), prompt=build_prompt(text("Prompt_Padrao"), text("Prompt_Variacao"),
+        id=canonical_id(row["ID"]), prompt=build_prompt(text("Prompt_Padrao"), text("Prompt_Variacao"),
             tema=text("Tema"), produto=text("Produto"), observacao_usuario=text("Observacao_Usuario"),
             prompt_negativo=text("Prompt_Negativo")),
         referencias=validate_reference_paths(config["reference_dir"], text("Arquivo_Referencia")),
@@ -77,18 +62,24 @@ def recover(df, journal, queue):
     def update(idx, name, value):
         nonlocal changed
         current = df.at[idx, name]
-        same = (pd.isna(current) and value is None) or current == value
+        same = cell_text(current) == cell_text(value)
         if not same:
             df.at[idx, name] = value
             changed = True
 
     for idx, row in df.iterrows():
-        key = cell_text(row["ID"])
+        key = canonical_id(row["ID"])
         record = journal.records.get(key)
         status = cell_text(row["Status"]).upper()
+        if not record and ambiguous_legacy_key(key, journal.records):
+            blocked.add(idx)
+            update(idx, "Status", "REVISAO")
+            update(idx, "Observacao", "ID pode corresponder a uma chave legada convertida; revise a identidade sem apagar o histórico.")
+            continue
         if not record and status not in {"PROCESSANDO", "REVISAO"}:
             continue
         phase = record.get("phase") if record else None
+        reason = "Resultado incerto ou divergente; confira .state.json e arquivos antes de reenviar."
         if phase == "rejected":
             if status == "PROCESSANDO":
                 update(idx, "Status", "ERRO")
@@ -100,15 +91,33 @@ def recover(df, journal, queue):
             update(idx, "Observacao", "Recuperado antes de chamada à API.")
             continue
         if phase == "files_ready":
+            migrate = False
             try:
                 historic_paths = tuple(Path(path) for path in record["outputs"])
                 files_valid = verified_outputs(historic_paths) == record["hashes"]
-                row_valid = ("row_fingerprint" not in record or
-                             row_fingerprint(row) == record["row_fingerprint"])
+                signature = record.get("row_fingerprint")
+                version = record.get("row_fingerprint_version", 1)
+                if not signature:
+                    # Preserve already concluded history, but never infer a new completion.
+                    row_valid = status == "CONCLUIDO"
+                    reason = "Registro legado sem assinatura: não é possível comprovar a correspondência da linha. Revisão manual necessária."
+                elif version == ROW_FINGERPRINT_VERSION:
+                    row_valid = row_fingerprint(row) == signature
+                elif version == 1:
+                    row_valid = matches_v1(row, signature)
+                    migrate = row_valid and files_valid
+                    reason = "Assinatura legada divergente: equivalência não comprovada; preserve o histórico para revisão."
+                else:
+                    row_valid = False
+                    reason = "Versão de assinatura desconhecida; revisão necessária antes de recuperar."
                 valid = files_valid and row_valid
             except Exception:
                 valid = False
             if valid:
+                if migrate:
+                    journal.put(key, row_fingerprint_v1=record["row_fingerprint"],
+                                row_fingerprint=row_fingerprint(row),
+                                row_fingerprint_version=ROW_FINGERPRINT_VERSION)
                 if status != "CONCLUIDO":
                     update(idx, "Status", "CONCLUIDO")
                     update(idx, "Tentativas", record["task_attempts"])
@@ -117,7 +126,7 @@ def recover(df, journal, queue):
                 continue
         blocked.add(idx)
         update(idx, "Status", "REVISAO")
-        update(idx, "Observacao", "Resultado incerto ou divergente; confira .state.json e arquivos antes de reenviar.")
+        update(idx, "Observacao", reason)
         logger.warning("ID=%s bloqueado para revisão; nenhuma chamada será repetida.", key)
     if changed:
         save_queue(df, queue)
@@ -154,7 +163,7 @@ def process_queue(queue, reference_dir, generator, env):
     model = getattr(generator, "model", env.get("OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst"))
     quality = getattr(generator, "quality", env.get("OPENAI_IMAGE_QUALITY", "auto"))
     df = load_queue(queue)
-    ids = df["ID"].map(cell_text)
+    ids = df["ID"].map(canonical_id)
     if ids.eq("").any() or ids.duplicated().any():
         raise ValueError("Cada linha deve ter um ID preenchido e único, estável entre execuções.")
     journal = Journal(queue) if real else None
@@ -229,7 +238,8 @@ def process_queue(queue, reference_dir, generator, env):
         journal.put(key, phase="prepared", fingerprint=fingerprint(job, model, quality),
                     outputs=[str(p) for p in job.saidas], task_attempts=attempts,
                     api_attempts=previous_api, hashes={}, model=model, quality=quality,
-                    row_fingerprint=row_fingerprint(row), result_dir=str(config["result_dir"]))
+                    row_fingerprint=row_fingerprint(row), row_fingerprint_version=ROW_FINGERPRINT_VERSION,
+                    result_dir=str(config["result_dir"]))
         df.at[idx, "Status"] = "PROCESSANDO"
         df.at[idx, "Tentativas"] = attempts
         save_queue(df, queue)  # MUST succeed before making a paid request.
