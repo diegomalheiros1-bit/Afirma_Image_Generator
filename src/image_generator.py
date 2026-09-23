@@ -19,6 +19,10 @@ class GenerationError(RuntimeError):
         self.uncertain = uncertain
 
 
+class OutputStorageError(GenerationError):
+    pass
+
+
 class ImageGenerator(ABC):
     is_real = False
 
@@ -148,10 +152,16 @@ class OpenAIImageGenerator(ImageGenerator):
         except Exception:
             raise GenerationError("Resposta de imagem inválida; revisar antes de reenviar.", uncertain=True) from None
         # Preserve partial files for recovery. Exclusive creation prevents overwrites.
-        for path, payload in zip(job.saidas, decoded):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("xb") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
+        try:
+            for path, payload in zip(job.saidas, decoded):
+                # Directory was probed before the API call, but storage can fail later.
+                with path.open("xb") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+        except OSError as exc:
+            raise OutputStorageError(
+                f"Falha ao gravar saída ({type(exc).__name__}); lote interrompido para revisão.",
+                uncertain=True,
+            ) from None
         return job.saidas

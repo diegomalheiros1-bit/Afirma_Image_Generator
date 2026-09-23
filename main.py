@@ -6,11 +6,13 @@ import pandas as pd
 from dotenv import dotenv_values
 
 from src.excel_reader import load_config, load_queue, save_queue
-from src.execution_state import Journal, PersistenceError, fingerprint, queue_lock, verified_outputs
+from src.execution_state import (Journal, PersistenceError, fingerprint, queue_lock,
+                                 row_fingerprint, validate_output_directory, verified_outputs)
 from src.prompt_builder import build_prompt
 from src.file_manager import openai_output_paths, output_paths, validate_reference_paths
 from src.generation_job import GenerationJob
-from src.image_generator import GenerationError, MockImageGenerator, OpenAIImageGenerator
+from src.image_generator import (GenerationError, MockImageGenerator, OpenAIImageGenerator,
+                                 OutputStorageError)
 from src.logger import get_logger
 
 QUEUE_PATH = Path("input/fila.xlsx")
@@ -68,8 +70,18 @@ def make_job(row, config, real):
         prompt_negativo=text("Prompt_Negativo"), observacao_usuario=text("Observacao_Usuario"))
 
 
-def recover(df, config, journal, queue, model, quality):
+def recover(df, journal, queue):
     blocked = set()
+    changed = False
+
+    def update(idx, name, value):
+        nonlocal changed
+        current = df.at[idx, name]
+        same = (pd.isna(current) and value is None) or current == value
+        if not same:
+            df.at[idx, name] = value
+            changed = True
+
     for idx, row in df.iterrows():
         key = cell_text(row["ID"])
         record = journal.records.get(key)
@@ -79,35 +91,36 @@ def recover(df, config, journal, queue, model, quality):
         phase = record.get("phase") if record else None
         if phase == "rejected":
             if status == "PROCESSANDO":
-                df.at[idx, "Status"] = "ERRO"
-                df.at[idx, "Observacao"] = "API rejeitou a chamada; corrija a causa antes de retornar a PENDENTE."
-                save_queue(df, queue)
+                update(idx, "Status", "ERRO")
+                update(idx, "Observacao", "API rejeitou a chamada; corrija a causa antes de retornar a PENDENTE.")
             continue
         if phase == "prepared":
             # Journal was persisted before PROCESSANDO; no call could have started.
-            df.at[idx, "Status"] = "PENDENTE"
-            df.at[idx, "Observacao"] = "Recuperado antes de chamada à API."
-            save_queue(df, queue)
+            update(idx, "Status", "PENDENTE")
+            update(idx, "Observacao", "Recuperado antes de chamada à API.")
             continue
         if phase == "files_ready":
             try:
-                job = make_job(row, config, True)
-                valid = (fingerprint(job, model, quality) == record["fingerprint"] and
-                         verified_outputs(job.saidas) == record["hashes"])
+                historic_paths = tuple(Path(path) for path in record["outputs"])
+                files_valid = verified_outputs(historic_paths) == record["hashes"]
+                row_valid = ("row_fingerprint" not in record or
+                             row_fingerprint(row) == record["row_fingerprint"])
+                valid = files_valid and row_valid
             except Exception:
                 valid = False
             if valid:
-                df.at[idx, "Status"] = "CONCLUIDO"
-                df.at[idx, "Tentativas"] = record["task_attempts"]
-                df.at[idx, "Observacao"] = "Saídas verificadas no registro; nenhuma nova chamada."
-                save_queue(df, queue)
+                if status != "CONCLUIDO":
+                    update(idx, "Status", "CONCLUIDO")
+                    update(idx, "Tentativas", record["task_attempts"])
+                    update(idx, "Observacao", "Saídas verificadas no registro; nenhuma nova chamada.")
                 blocked.add(idx)
                 continue
         blocked.add(idx)
-        df.at[idx, "Status"] = "REVISAO"
-        df.at[idx, "Observacao"] = "Resultado incerto ou divergente; confira .state.json e arquivos antes de reenviar."
-        save_queue(df, queue)
+        update(idx, "Status", "REVISAO")
+        update(idx, "Observacao", "Resultado incerto ou divergente; confira .state.json e arquivos antes de reenviar.")
         logger.warning("ID=%s bloqueado para revisão; nenhuma chamada será repetida.", key)
+    if changed:
+        save_queue(df, queue)
     return blocked
 
 
@@ -145,9 +158,10 @@ def process_queue(queue, reference_dir, generator, env):
     if ids.eq("").any() or ids.duplicated().any():
         raise ValueError("Cada linha deve ter um ID preenchido e único, estável entre execuções.")
     journal = Journal(queue) if real else None
+    blocked = set()
     if real and not dry:
-        recover(df, config, journal, queue, model, quality)
-    pending = [idx for idx, row in df.iterrows() if is_pending(row["Status"])]
+        blocked = recover(df, journal, queue)
+    pending = [idx for idx, row in df.iterrows() if idx not in blocked and is_pending(row["Status"])]
     selected, images = [], 0
     for idx in pending:
         try:
@@ -169,6 +183,8 @@ def process_queue(queue, reference_dir, generator, env):
     logger.info("Início | total=%s pendentes=%s selecionados=%s dry_run=%s", len(df), len(pending), len(selected), dry)
     success = errors = 0
     mock_dir = config["result_dir"] / "_mock" / uuid.uuid4().hex
+    if real and not dry and selected:
+        validate_output_directory(config["result_dir"])
     for idx in selected:
         key = ids[idx]
         row = df.loc[idx]
@@ -212,7 +228,8 @@ def process_queue(queue, reference_dir, generator, env):
         previous_api = journal.records.get(key, {}).get("api_attempts", 0)
         journal.put(key, phase="prepared", fingerprint=fingerprint(job, model, quality),
                     outputs=[str(p) for p in job.saidas], task_attempts=attempts,
-                    api_attempts=previous_api, hashes={})
+                    api_attempts=previous_api, hashes={}, model=model, quality=quality,
+                    row_fingerprint=row_fingerprint(row), result_dir=str(config["result_dir"]))
         df.at[idx, "Status"] = "PROCESSANDO"
         df.at[idx, "Tentativas"] = attempts
         save_queue(df, queue)  # MUST succeed before making a paid request.
@@ -227,6 +244,19 @@ def process_queue(queue, reference_dir, generator, env):
             hashes = verified_outputs(job.saidas)
         except PersistenceError:
             raise
+        except OutputStorageError as exc:
+            try:
+                journal.put(key, phase="uncertain", storage_failure=True)
+                df.at[idx, "Status"] = "REVISAO"
+                df.at[idx, "Observacao"] = str(exc)
+                save_queue(df, queue)
+            except PersistenceError:
+                raise
+            logger.error("ID=%s: %s", key, exc)
+            raise PersistenceError(
+                "Falha ao gravar imagem após resposta da API. Novas chamadas interrompidas; "
+                "preserve arquivos e .state.json para revisão."
+            ) from None
         except Exception as exc:
             uncertain = not isinstance(exc, GenerationError) or exc.uncertain
             message = str(exc) if isinstance(exc, GenerationError) else "Falha após iniciar geração; resultado requer revisão."

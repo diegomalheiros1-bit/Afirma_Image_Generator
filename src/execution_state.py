@@ -60,6 +60,40 @@ def verified_outputs(paths):
     return hashes
 
 
+def validate_output_directory(path):
+    """Create and probe the output directory before any paid API call."""
+    path = Path(path)
+    probe = None
+    try:
+        if path.exists() and not path.is_dir():
+            raise PersistenceError(f"Pasta_Resultados aponta para um arquivo: {path}")
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise PersistenceError(f"Pasta_Resultados não é um diretório: {path}")
+        with tempfile.NamedTemporaryFile(prefix=".afirma-write-test-", suffix=".tmp",
+                                         dir=path, delete=False) as handle:
+            probe = Path(handle.name)
+            handle.write(b"storage-check")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except PersistenceError:
+        raise
+    except PermissionError:
+        raise PersistenceError(f"Sem permissão de escrita em Pasta_Resultados: {path}") from None
+    except OSError as exc:
+        raise PersistenceError(
+            f"Falha de armazenamento ao validar Pasta_Resultados ({type(exc).__name__}): {path}"
+        ) from None
+    finally:
+        if probe is not None:
+            try:
+                probe.unlink(missing_ok=True)
+            except OSError:
+                raise PersistenceError(
+                    f"Falha ao remover arquivo de teste em Pasta_Resultados: {path}"
+                ) from None
+
+
 class Journal:
     def __init__(self, queue):
         self.path = Path(str(queue.resolve()) + ".state.json")
@@ -93,3 +127,21 @@ def fingerprint(job, model, quality):
              [(str(path), digest(path)) for path in job.referencias],
              [str(path) for path in job.saidas]]
     return hashlib.sha256(json.dumps(value, ensure_ascii=True).encode()).hexdigest()
+
+
+def row_fingerprint(row):
+    """Fingerprint editable job fields without interpreting current folders/settings."""
+    fields = ("ID", "Prompt_Padrao", "Prompt_Variacao", "Arquivo_Referencia", "Nome_Saida",
+              "Tema", "Produto", "Cliente", "Prompt_Negativo", "Quantidade", "Observacao_Usuario")
+    values = []
+    for name in fields:
+        value = row.get(name, "")
+        if pd_is_missing(value):
+            value = ""
+        values.append([name, str(value).strip()])
+    return hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()
+
+
+def pd_is_missing(value):
+    # Avoid importing pandas in this persistence-only module.
+    return value is None or isinstance(value, float) and value != value

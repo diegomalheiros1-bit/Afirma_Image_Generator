@@ -43,6 +43,14 @@ Para quantidade 1, `imagem_001.png` é preservado; para 3, as saídas são
 Arquivos existentes nunca são sobrescritos. Os arquivos reais ficam em
 `Pasta_Resultados`, inclusive com o provider OpenAI.
 
+Antes da primeira chamada real do lote, o programa cria `Pasta_Resultados` se
+necessário, confirma que o caminho é um diretório e faz uma escrita exclusiva
+com arquivo temporário, incluindo flush no armazenamento. O teste remove apenas
+o arquivo que ele próprio criou. Caminho ocupado por arquivo, falta de permissão
+ou falha de armazenamento encerra a execução com todas as linhas ainda
+PENDENTE. Essa verificação é somente uma sondagem inicial: disco, permissão e
+sincronização ainda podem falhar após a API responder.
+
 A aba `Configuracao` usa as colunas `Parametro` e `Valor`:
 
 | Parâmetro | Significado |
@@ -131,7 +139,10 @@ mude para DRY_RUN=NAO e execute novamente. Mantenha o terminal ativo.
 
 Além do Excel, cada fila tem um arquivo `fila.xlsx.state.json` junto dela.
 Ele guarda ID, fase, tentativas da tarefa e da API, caminhos e hashes das
-entradas/saídas. Não armazena prompts, binários ou credenciais. Preserve esse
+entradas/saídas, além do modelo, qualidade, pasta histórica e assinatura dos
+campos editáveis da linha. Não armazena prompts em texto, binários ou
+credenciais. Modelo, qualidade e pasta registrados pertencem à geração já
+executada; alterar a configuração global afeta somente tarefas novas. Preserve esse
 arquivo junto da planilha em backups; perdê-lo remove evidências necessárias
 para uma recuperação segura. O arquivo `fila.xlsx.lock` usa trava do sistema
 operacional; duas instâncias não podem executar a mesma fila simultaneamente.
@@ -145,6 +156,19 @@ todos os PNGs, grava `files_ready` com hashes e só então grava CONCLUIDO.
 Falha no Excel ou no registro interrompe novas gerações. Não existe um save
 incondicional no finally que possa ocultar o erro original.
 
+Antes de qualquer nova chamada, a recuperação examina o histórico e agrupa as
+mudanças necessárias no Excel em uma única gravação. Fila concluída e íntegra
+não reescreve Excel nem observações. Se essa única gravação falhar, nenhuma nova
+chamada é iniciada. As gravações críticas de PROCESSANDO e CONCLUIDO continuam
+individuais durante uma geração real.
+
+Se a API responder mas a gravação de uma imagem falhar, o lote para: nenhuma
+tarefa seguinte é enviada naquela execução. Arquivos completos ou parciais são
+preservados, a tarefa fica em REVISAO quando o estado puder ser salvo e as
+demais ficam PENDENTE. Na execução seguinte, a tarefa afetada não é reenviada;
+outras tarefas pendentes podem prosseguir depois que o armazenamento estiver
+estável. Não trate a sondagem inicial como garantia de escrita futura.
+
 | Situação | Recuperação |
 | --- | --- |
 | Excel aberto, permissão ou disco cheio | Feche o Excel, corrija o acesso/espaço, preserve arquivos e registro e execute novamente |
@@ -155,6 +179,14 @@ incondicional no finally que possa ocultar o erro original.
 | in_flight, uncertain ou PROCESSANDO sem registro | REVISAO; não reenvia automaticamente, mesmo se alguém mudar para PENDENTE |
 | Arquivo já existente sem registro confirmado | Não sobrescreve nem assume sucesso; confira sua origem antes de mover/renomear |
 | Registro ilegível | Interrompe; restaure um backup íntegro, não apague para forçar execução |
+
+Registros criados antes dos campos históricos novos continuam utilizáveis.
+Para `files_ready`, a recuperação usa os caminhos e hashes já persistidos e não
+presume que modelo, qualidade ou pasta atuais eram os usados. Como esses
+registros legados não possuem assinatura da linha, eles não permitem provar se
+o conteúdo editável do job foi alterado depois; saídas íntegras são preservadas
+e essa limitação deve ser considerada na revisão manual. Registros novos
+detectam alteração da linha e enviam a tarefa a REVISAO sem nova chamada.
 
 Para REVISAO por resposta perdida, consulte o resultado/uso da execução na
 conta antes de decidir. Se não for possível comprovar se houve geração,

@@ -213,13 +213,149 @@ class ReliabilityTests(IsolatedTest):
                 raise OSError("Disk full")
             return original(path, mode, *args, **kwargs)
         with patch.object(Path, "open", new=fail):
-            self.run_queue(env={**self.env, "MAX_IMAGES_PER_RUN": "4"})
+            with self.assertRaises(PersistenceError):
+                self.run_queue(env={**self.env, "MAX_IMAGES_PER_RUN": "4"})
         self.assertTrue((self.output / "1_01.png").exists())
         self.assertFalse((self.output / "1_02.png").exists())
         self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
         calls = self.edit.call_count
         self.run_queue()
+        self.assertEqual(self.edit.call_count, calls + 2)
+        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
+
+    def test_output_destination_file_fails_before_api(self):
+        destination = self.root / "occupied"
+        destination.write_text("not a directory")
+        book = load_workbook(self.queue)
+        book["Configuracao"]["B3"] = str(destination)
+        book.save(self.queue)
+        book.close()
+        with self.assertRaisesRegex(PersistenceError, "aponta para um arquivo"):
+            self.run_queue()
+        self.assertEqual(self.edit.call_count, 0)
+        self.assertTrue((load_queue(self.queue)["Status"] == "PENDENTE").all())
+
+    def test_output_destination_permission_failure_before_api(self):
+        with patch("src.execution_state.tempfile.NamedTemporaryFile",
+                   side_effect=PermissionError("denied")):
+            with self.assertRaisesRegex(PersistenceError, "Sem permissão"):
+                self.run_queue()
+        self.assertEqual(self.edit.call_count, 0)
+        self.assertTrue((load_queue(self.queue)["Status"] == "PENDENTE").all())
+
+    def test_storage_failure_stops_following_jobs(self):
+        original = Path.open
+        def fail(path, mode="r", *args, **kwargs):
+            if path.name == "1.png" and mode == "xb":
+                raise OSError("disk failed")
+            return original(path, mode, *args, **kwargs)
+        with patch.object(Path, "open", new=fail):
+            with self.assertRaisesRegex(PersistenceError, "Novas chamadas interrompidas"):
+                self.run_queue()
+        self.assertEqual(self.edit.call_count, 1)
+        statuses = list(load_queue(self.queue)["Status"])
+        self.assertEqual(statuses, ["REVISAO", "PENDENTE", "PENDENTE"])
+        self.run_queue()
+        self.assertEqual(self.edit.call_count, 3)
+        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
+
+    def test_completed_history_uses_original_quality_and_folder_without_excel_write(self):
+        self.run_queue()
+        original_outputs = sorted(record["outputs"] for record in Journal(self.queue).records.values())
+        book = load_workbook(self.queue)
+        book["Configuracao"]["B3"] = "nova-pasta"
+        book.save(self.queue)
+        book.close()
+        high = OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.edit)),
+                                    quality="high", sleep=self.sleep)
+        with patch("main.save_queue", wraps=save_queue) as save:
+            result = self.run_queue(generator=high, env={**self.env, "OPENAI_IMAGE_QUALITY": "high"})
+        self.assertEqual(result["processed"], 0)
+        save.assert_not_called()
+        self.assertEqual(self.edit.call_count, 3)
+        self.assertTrue((load_queue(self.queue)["Status"] == "CONCLUIDO").all())
+        self.assertEqual(sorted(record["outputs"] for record in Journal(self.queue).records.values()), original_outputs)
+
+    def test_new_job_uses_new_quality_without_reinterpreting_history(self):
+        self.run_queue()
+        book = load_workbook(self.queue)
+        sheet = book["Fila_Geracao"]
+        values = [4, "new base", "new var", "ok.png", "4.png", "PENDENTE", 0, None,
+                  "new theme", "new product", "client", "avoid", 1, "note"]
+        sheet.append(values)
+        book.save(self.queue)
+        book.close()
+        high = OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.edit)),
+                                    quality="high", sleep=self.sleep)
+        self.assertEqual(self.run_queue(generator=high, env={**self.env, "OPENAI_IMAGE_QUALITY": "high"})["processed"], 1)
+        self.assertEqual(self.calls[-1]["quality"], "high")
+        records = Journal(self.queue).records
+        self.assertEqual(records["1"]["quality"], "auto")
+        self.assertEqual(records["4"]["quality"], "high")
+
+    def test_legacy_record_remains_usable_and_recovers_without_charge(self):
+        self.run_queue()
+        journal = Journal(self.queue)
+        for record in journal.records.values():
+            for field in ("model", "quality", "result_dir", "row_fingerprint"):
+                record.pop(field, None)
+        journal.put("1")
+        self.update(F2="PROCESSANDO", H2=None)
+        calls = self.edit.call_count
+        with patch("main.save_queue", wraps=save_queue) as save:
+            self.run_queue(generator=OpenAIImageGenerator(
+                client=SimpleNamespace(images=SimpleNamespace(edit=self.edit)), quality="high", sleep=self.sleep))
         self.assertEqual(self.edit.call_count, calls)
+        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "CONCLUIDO")
+        self.assertEqual(save.call_count, 1)
+
+    def test_multiple_recoveries_write_excel_once(self):
+        self.run_queue()
+        book = load_workbook(self.queue)
+        sheet = book["Fila_Geracao"]
+        for row in range(2, 5):
+            sheet[f"F{row}"] = "PROCESSANDO"
+            sheet[f"H{row}"] = None
+        book.save(self.queue)
+        book.close()
+        calls = self.edit.call_count
+        with patch("main.save_queue", wraps=save_queue) as save:
+            self.run_queue()
+        self.assertEqual(self.edit.call_count, calls)
+        self.assertEqual(save.call_count, 1)
+        self.assertTrue((load_queue(self.queue)["Status"] == "CONCLUIDO").all())
+
+    def test_failed_batched_recovery_save_blocks_new_calls(self):
+        self.run_queue()
+        book = load_workbook(self.queue)
+        sheet = book["Fila_Geracao"]
+        sheet["F2"] = "PROCESSANDO"
+        sheet.append([4, "base", "var", "ok.png", "4.png", "PENDENTE", 0, None,
+                      "tema", "produto", "cliente", "negativo", 1, "obs"])
+        book.save(self.queue)
+        book.close()
+        calls = self.edit.call_count
+        with patch("main.save_queue", side_effect=PersistenceError("Excel locked")) as save:
+            with self.assertRaises(PersistenceError):
+                self.run_queue()
+        self.assertEqual(save.call_count, 1)
+        self.assertEqual(self.edit.call_count, calls)
+
+    def test_completed_missing_or_changed_historical_output_goes_to_review(self):
+        self.run_queue()
+        (self.output / "1.png").unlink()
+        (self.output / "2.png").write_bytes(png_bytes() + b"changed")
+        self.run_queue()
+        statuses = list(load_queue(self.queue)["Status"])
+        self.assertEqual(statuses[:2], ["REVISAO", "REVISAO"])
+        self.assertEqual(self.edit.call_count, 3)
+
+    def test_editing_completed_job_never_silently_regenerates(self):
+        self.run_queue()
+        self.update(B2="edited prompt", F2="PENDENTE")
+        self.run_queue()
+        self.assertEqual(self.edit.call_count, 3)
+        self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
 
     def test_os_lock_blocks_another_process_and_releases(self):
         code = ("from pathlib import Path; from src.execution_state import queue_lock, PersistenceError; "
