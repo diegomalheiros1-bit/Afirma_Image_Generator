@@ -1,6 +1,6 @@
 # Afirma Image Generator
 
-MVP Python para gerar imagens a partir de Excel, combinando prompt padrão,
+Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
 Agora inclui a interface funcional **Afirma Image Studio**: execute `python studio.py`.
 Consulte [o guia do Studio](docs/STUDIO.md) para os dois modos de referências,
@@ -8,6 +8,66 @@ cadastro de pastas, configurações, simulação e retomada. A API real fica blo
 por padrão na interface; habilitação somente após autorização explícita.
 O script depende de um processo ativo: fechar o terminal, desligar o computador
 ou interromper o Python interrompe o lote. Não há serviço em segundo plano.
+
+## Começar pelo Studio
+
+Com as dependências instaladas, execute na pasta do projeto:
+
+```powershell
+python studio.py
+```
+
+O programa abre a interface no navegador em `http://127.0.0.1:<porta>/`.
+Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
+
+1. Escolha como informar as referências.
+2. Selecione a planilha da campanha com os prompts e nomes de saída.
+3. No modo planilha, confira as pastas; no modo direto, adicione as fotos.
+4. Abra Configurações e aplique os parâmetros de imagem e limites.
+5. Valide a campanha e execute a simulação antes de considerar a API real.
+
+| Modo | Referências utilizadas |
+| --- | --- |
+| Pela planilha | Cada item usa exclusivamente `Arquivo_Referencia` da sua linha, com arquivos separados por `;` e aliases opcionais |
+| Selecionar no software | Até 16 fotos adicionadas cumulativamente de pastas diferentes, com miniaturas e remoção individual; a seleção vale para todos os itens |
+
+No modo direto, `Arquivo_Referencia` é ignorado e pode estar vazio ou ausente;
+`Pasta_Referencias` também pode estar vazia ou ausente. A planilha continua
+necessária para os demais dados. Não há fallback automático entre os modos.
+Ao voltar ao modo planilha sem configuração legada, escolha uma pasta padrão.
+
+O cadastro de pastas usa seletores nativos do Windows. A gravação de
+`Pastas_Referencias` na planilha é uma ação explícita na interface. Fotos e cadastro
+da sessão não são persistidos pelo botão de salvar preferências; consulte o guia
+para reabrir a campanha. Durante execução ou pausa, alterações ficam bloqueadas.
+
+## Configurações na interface
+
+- Modelos: GPT Image 2.5 Sunburst e Flare.
+- Formato: PNG, JPEG ou WebP; `Nome_Saida` precisa usar a extensão correspondente.
+- Fundo: automático, opaco ou transparente; JPEG não aceita transparência.
+- Qualidade: automática, baixa, média, alta, muito alta ou máxima.
+- Resolução: automática, três tamanhos predefinidos ou dimensões personalizadas validadas.
+- Compressão: opcional, de 0 a 100%, somente para JPEG/WebP, separada da qualidade de geração.
+- Pasta de saída, timeout, novas tentativas, limites de jobs/imagens e modo seguro.
+
+Preferências podem ser aplicadas à sessão ou salvas em `.studio-settings.json`,
+sem credenciais. Os padrões vêm do ambiente sobre o `.env`; preferências salvas
+e alterações aplicadas no Studio prevalecem sobre esses padrões. A pasta de saída
+da planilha é usada quando não houver substituição no Studio. A opção de simular
+ou gerar no Studio define o modo efetivo, independentemente de `Dry_Run` do Excel.
+
+## Estado da validação
+
+Revisão de 06/10/2026: **89 testes automatizados passaram** em cópia isolada,
+com clientes falsos e arquivos temporários. Incluem as correções de retomada de
+trabalhos `prepared` e de seleção direta sem `Pasta_Referencias`.
+O relatório da implementação registra 12/12 itens simulados com pausa e retomada.
+Os seletores nativos possuem testes de contrato; o fluxo de navegador registrado
+usou seleção fictícia pré-carregada. O teste pago permanece pendente de autorização.
+
+Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md)
+e [proposta do teste real](docs/TESTE_REAL_PROPOSTO.md).
 
 ## Instalação
 
@@ -28,7 +88,8 @@ O ambiente tem precedência sobre o `.env`; `DRY_RUN` tem precedência sobre
 ## Planilha e referências
 
 A aba `Fila_Geracao` requer `ID`, `Prompt_Padrao`, `Prompt_Variacao`,
-`Arquivo_Referencia`, `Nome_Saida`, `Status`, `Tentativas` e `Observacao`.
+`Nome_Saida`, `Status`, `Tentativas` e `Observacao`. `Arquivo_Referencia` é
+obrigatória somente no modo de referências pela planilha.
 IDs devem ser únicos, preenchidos e estáveis. Não altere IDs para contornar
 uma tarefa bloqueada: eles ligam a linha ao histórico da geração.
 
@@ -37,7 +98,8 @@ e `Observacao_Usuario`. Quantidade ausente/vazia significa 1; deve ser inteira
 positiva. Na OpenAI, use de 1 a 10 por job.
 
 `Arquivo_Referencia` aceita `modelo.jpg;produto.png`, preservando a ordem.
-Todas as referências devem existir sob a pasta configurada. PNG, JPEG/JPG e
+No modo planilha, as referências devem existir sob a pasta padrão ou a pasta
+identificada pelo alias. No modo direto, valem os arquivos escolhidos na interface. PNG, JPEG/JPG e
 WEBP são aceitos. Antes da chamada real, o conteúdo também é validado como
 imagem; OpenAI aceita até 16 referências, cada uma menor que 50 MB.
 
@@ -60,14 +122,14 @@ A aba `Configuracao` usa as colunas `Parametro` e `Valor`:
 
 | Parâmetro | Significado |
 | --- | --- |
-| Pasta_Referencias | Relativa à pasta do Excel, por exemplo `referencias` |
+| Pasta_Referencias | Pasta padrão no modo planilha, relativa à pasta do Excel; dispensada no modo direto |
 | Pasta_Resultados | Relativa a `output/` na pasta pai de `input/`, por exemplo `imagens` |
 | Limite_Por_Execucao | Máximo de jobs por execução, inteiro positivo |
 | Dry_Run | SIM/NAO; padrão SIM, usado se DRY_RUN não estiver definido |
 
 Caminhos absolutos também são aceitos. `Modelo_API`, `Qualidade` e
 `Prompt_Sistema` legados na planilha não são usados: modelo e qualidade vêm
-das variáveis abaixo. `Observacao` é controle do programa;
+das variáveis abaixo no CLI e das preferências aplicadas no Studio. `Observacao` é controle do programa;
 `Observacao_Usuario` contém a orientação do usuário.
 
 ## Prompt enviado
@@ -87,7 +149,7 @@ como metadado e não é enviado. O DRY RUN mostra exatamente esse texto.
 | MAX_JOBS_PER_RUN | 1 | Máximo de jobs selecionados |
 | MAX_IMAGES_PER_RUN | 1 | Soma máxima das quantidades selecionadas |
 | OPENAI_API_KEY | Sem padrão | Necessária somente para chamada real |
-| OPENAI_IMAGE_MODEL | gpt-image-2.5-sunburst | Modelo validado neste MVP |
+| OPENAI_IMAGE_MODEL | gpt-image-2.5-sunburst | gpt-image-2.5-sunburst ou gpt-image-2.5-flare |
 | OPENAI_IMAGE_QUALITY | auto | auto, low, medium, high, xhigh, max |
 | OPENAI_IMAGE_FORMAT | png | png, jpeg, webp; nome de saída deve corresponder |
 | OPENAI_IMAGE_BACKGROUND | auto | auto, opaque, transparent; JPEG não aceita transparência |
@@ -121,7 +183,12 @@ Sucesso no resumo desses modos significa validação/simulação bem-sucedida,
 não uma imagem gerada. DRY RUN não altera o Excel nem o registro de execução;
 o arquivo de lock local e o log podem ser criados.
 
-## Validar primeiro uma imagem real
+## Teste real — somente após autorização explícita
+
+O roteiro abaixo é para o CLI e somente deve ser executado após revisar a
+simulação e autorizar o gasto. Para o Studio, consulte a proposta de teste real.
+
+### Validar primeiro uma imagem real
 
 1. Coloque uma referência válida em `input/referencias/produto.png`.
 2. Na planilha, preencha uma linha com ID único, prompt, referência
@@ -161,7 +228,7 @@ pastas de rede/sincronização não são garantidas por este MVP.
 
 O programa grava `prepared`, salva PROCESSANDO no Excel e somente então pode
 chamar a API. Antes de cada chamada, grava `in_flight`. Após salvar e validar
-todos os PNGs, grava `files_ready` com hashes e só então grava CONCLUIDO.
+todas as imagens no formato escolhido, grava `files_ready` com hashes e só então grava CONCLUIDO.
 Falha no Excel ou no registro interrompe novas gerações. Não existe um save
 incondicional no finally que possa ocultar o erro original.
 
@@ -297,7 +364,7 @@ Outros modelos são rejeitados até validar seus parâmetros. Acesso do projeto,
 saldo e qualidade visual só podem ser confirmados em teste real autorizado.
 
 Inclui interface local no navegador. Não inclui executável, serviço ou estimativa monetária.
-# Referências em várias pastas
+## Referências em várias pastas
 
 É possível combinar referências de pastas independentes em uma mesma linha da fila.
 Na planilha, crie a aba opcional `Pastas_Referencias`, com estas duas colunas:
@@ -314,11 +381,14 @@ de minúsculas, começam com letra e aceitam letras sem acento, números, hífen
 sublinhado (até 40 caracteres). Não cadastre aliases que diferem apenas pela caixa.
 
 Arquivos sem alias continuam usando `Pasta_Referencias` da aba `Configuracao`;
-essa configuração permanece obrigatória e compatível com planilhas existentes.
+essa configuração permanece compatível com planilhas existentes e é dispensada
+no modo de seleção direta.
 Caminhos relativos das pastas são resolvidos a partir da pasta da planilha.
 Pastas inexistentes ou aliases duplicados bloqueiam a configuração. Arquivos ausentes,
 aliases desconhecidos e caminhos que escapem da pasta cadastrada são rejeitados.
 O limite existente de 1 a 16 referências por geração OpenAI permanece.
 
-O protótipo demonstra o cadastro de pastas; o seletor de pasta do aplicativo Windows
-e a gravação desse cadastro na planilha ainda não estão integrados à interface.
+O Studio integra os seletores nativos do Windows, edição de aliases e pasta padrão.
+Use a ação de salvar pastas para gravar explicitamente o cadastro na planilha.
+O protótipo aprovado permanece como referência visual; execute `studio.py` para
+utilizar a interface conectada ao processamento.
