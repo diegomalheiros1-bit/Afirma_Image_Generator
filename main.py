@@ -1,4 +1,5 @@
 from dataclasses import replace
+from copy import deepcopy
 from pathlib import Path
 import os
 import uuid
@@ -8,6 +9,8 @@ from src.excel_reader import load_config, load_queue, save_queue
 from src.execution_state import (Journal, PersistenceError, fingerprint, queue_lock,
                                  ROW_FINGERPRINT_VERSION, matches_v1, row_fingerprint,
                                  validate_output_directory, verified_outputs)
+from src.execution_state import execution_identity, digest
+from src.image_settings import ImageSettings
 from src.job_values import ambiguous_legacy_key, canonical_id, cell_text, parse_quantity
 from src.prompt_builder import build_prompt
 from src.file_manager import openai_output_paths, output_paths, validate_reference_paths
@@ -42,20 +45,30 @@ def make_job(row, config, real):
     text = lambda name: cell_text(row.get(name))
     quantity = parse_quantity(row.get("Quantidade"))
     name = text("Nome_Saida")
-    paths = (openai_output_paths(config["result_dir"], name, quantity, check_exists=False) if real else
+    settings = config.get("image_settings", ImageSettings())
+    mode = config.get("reference_mode", "spreadsheet")
+    paths = (openai_output_paths(config["result_dir"], name, quantity, check_exists=False,
+                                output_format=settings.output_format) if real or config.get("studio") else
              output_paths(config["result_dir"], name, quantity))
     attempts = 0 if not cell_text(row["Tentativas"]) else int(row["Tentativas"])
-    return GenerationJob(
+    job = GenerationJob(
         id=canonical_id(row["ID"]), prompt=build_prompt(text("Prompt_Padrao"), text("Prompt_Variacao"),
             tema=text("Tema"), produto=text("Produto"), observacao_usuario=text("Observacao_Usuario"),
             prompt_negativo=text("Prompt_Negativo")),
-        referencias=validate_reference_paths(config["reference_dir"], text("Arquivo_Referencia")),
+        referencias=(tuple(Path(p).resolve() for p in config.get("direct_references", ())) if mode == "direct" else
+                     validate_reference_paths(config["reference_dir"], text("Arquivo_Referencia"), config.get("reference_dirs"))),
         nome_saida=name, status=text("Status"), tentativas=attempts, quantidade=quantity, saidas=paths,
         tema=text("Tema"), produto=text("Produto"), cliente=text("Cliente"),
-        prompt_negativo=text("Prompt_Negativo"), observacao_usuario=text("Observacao_Usuario"))
+        prompt_negativo=text("Prompt_Negativo"), observacao_usuario=text("Observacao_Usuario"),
+        settings=settings, reference_mode=mode)
+    hashes = tuple(digest(p) for p in job.referencias)
+    expected = config.get("expected_reference_hashes")
+    if expected is not None and any(expected.get(str(p)) != h for p, h in zip(job.referencias, hashes)):
+        raise ValueError("Foto de referência alterada, movida ou substituída durante a execução; confira a campanha.")
+    return replace(job, reference_hashes=hashes)
 
 
-def recover(df, journal, queue):
+def recover(df, journal, queue, config=None):
     blocked = set()
     changed = False
 
@@ -94,7 +107,8 @@ def recover(df, journal, queue):
             migrate = False
             try:
                 historic_paths = tuple(Path(path) for path in record["outputs"])
-                files_valid = verified_outputs(historic_paths) == record["hashes"]
+                historic_format = record.get("execution", {}).get("settings", {}).get("output_format", "png")
+                files_valid = verified_outputs(historic_paths, historic_format) == record["hashes"]
                 signature = record.get("row_fingerprint")
                 version = record.get("row_fingerprint_version", 1)
                 if not signature:
@@ -102,7 +116,10 @@ def recover(df, journal, queue):
                     row_valid = status == "CONCLUIDO"
                     reason = "Registro legado sem assinatura: não é possível comprovar a correspondência da linha. Revisão manual necessária."
                 elif version == ROW_FINGERPRINT_VERSION:
-                    row_valid = row_fingerprint(row) == signature
+                    signature_row = dict(row)
+                    if record.get("execution", {}).get("reference_mode") == "direct":
+                        signature_row["Arquivo_Referencia"] = ""
+                    row_valid = row_fingerprint(signature_row) == signature
                 elif version == 1:
                     row_valid = matches_v1(row, signature)
                     migrate = row_valid and files_valid
@@ -110,6 +127,21 @@ def recover(df, journal, queue):
                 else:
                     row_valid = False
                     reason = "Versão de assinatura desconhecida; revisão necessária antes de recuperar."
+                if record.get("execution") is not None and signature:
+                    if config is None or record["execution"].get("version") != 1:
+                        row_valid = False
+                    else:
+                        recovery_config = dict(config)
+                        recovery_config.pop("expected_reference_hashes", None)
+                        if status == "CONCLUIDO":
+                            # Completed history retains its original rendering preferences.
+                            recovery_config["image_settings"] = ImageSettings(**record["execution"]["settings"])
+                            recovery_config["result_dir"] = Path(record["result_dir"])
+                        job = make_job(row, recovery_config, True)
+                        _, current_signature = execution_identity(job, row)
+                        row_valid = row_valid and current_signature == record.get("execution_fingerprint")
+                        if not row_valid:
+                            reason = "Configuração, referências (caminhos/hashes) ou linha divergente; restaure a execução original ou mantenha REVISAO."
                 valid = files_valid and row_valid
             except Exception:
                 valid = False
@@ -133,21 +165,29 @@ def recover(df, journal, queue):
     return blocked
 
 
-def main(queue_path=QUEUE_PATH, reference_dir=None, generator=None, *, env=None):
+def main(queue_path=QUEUE_PATH, reference_dir=None, generator=None, *, env=None, overrides=None, control=None):
     queue_path = Path(queue_path).resolve()
     # Explicit env lets tests run without even reading the project's secret file.
     if env is None:
         env = {**dotenv_values(queue_path.parent.parent / ".env"), **os.environ}
     with queue_lock(queue_path):
-        return process_queue(queue_path, reference_dir, generator, env)
+        return process_queue(queue_path, reference_dir, generator, dict(env), deepcopy(overrides), control)
 
 
-def process_queue(queue, reference_dir, generator, env):
-    config = load_config(queue)
+def process_queue(queue, reference_dir, generator, env, overrides=None, control=None):
+    config = load_config(queue, reference_mode=("direct" if overrides and "reference_dirs" in overrides else
+                                               (overrides or {}).get("reference_mode", "spreadsheet")))
     if "DRY_RUN" in env:
         config["dry_run"] = flag(env["DRY_RUN"])
     if reference_dir is not None:
         config["reference_dir"] = Path(reference_dir).resolve()
+    if overrides:
+        config.update(overrides)
+    if "DRY_RUN" in env:
+        config["dry_run"] = flag(env["DRY_RUN"])
+    mode = config.get("reference_mode", "spreadsheet")
+    if mode not in {"spreadsheet", "direct"}:
+        raise ValueError("Modo de referências inválido.")
     provider = env.get("IMAGE_PROVIDER", "simulation").strip().lower()
     if generator is not None:
         provider = "openai" if generator.is_real else "mock"
@@ -160,16 +200,19 @@ def process_queue(queue, reference_dir, generator, env):
     safe = flag(env.get("FIRST_RUN_SAFE_MODE", "SIM"))
     if real and not dry and safe and (max_jobs > 1 or max_images > 1 or config["limit"] > 1):
         raise ValueError("FIRST_RUN_SAFE_MODE=SIM exige todos os limites <= 1.")
-    model = getattr(generator, "model", env.get("OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst"))
-    quality = getattr(generator, "quality", env.get("OPENAI_IMAGE_QUALITY", "auto"))
-    df = load_queue(queue)
+    settings = config.get("image_settings", getattr(generator, "settings", None) or ImageSettings.from_env(env))
+    config["image_settings"] = settings
+    if generator is not None and getattr(generator, "settings", settings) != settings:
+        raise ValueError("Os parâmetros do gerador divergem da configuração capturada.")
+    model, quality = settings.model, settings.quality
+    df = load_queue(queue, reference_mode=mode)
     ids = df["ID"].map(canonical_id)
     if ids.eq("").any() or ids.duplicated().any():
         raise ValueError("Cada linha deve ter um ID preenchido e único, estável entre execuções.")
     journal = Journal(queue) if real else None
     blocked = set()
     if real and not dry:
-        blocked = recover(df, journal, queue)
+        blocked = recover(df, journal, queue, config)
     pending = [idx for idx, row in df.iterrows() if idx not in blocked and is_pending(row["Status"])]
     selected, images = [], 0
     for idx in pending:
@@ -191,23 +234,31 @@ def process_queue(queue, reference_dir, generator, env):
           f"Imagens previstas: {images}\nLimite configurado: {min(max_jobs, config['limit'])} jobs / {max_images} imagens")
     logger.info("Início | total=%s pendentes=%s selecionados=%s dry_run=%s", len(df), len(pending), len(selected), dry)
     success = errors = 0
+    processed = 0
+    if control:
+        control.event("plan", total=len(selected), images=images)
     mock_dir = config["result_dir"] / "_mock" / uuid.uuid4().hex
     if real and not dry and selected:
         validate_output_directory(config["result_dir"])
     for idx in selected:
+        if control and not control.checkpoint():
+            break
+        processed += 1
         key = ids[idx]
         row = df.loc[idx]
         logger.info("Iniciado ID=%s", key)
         # Validation failures are local and do not count as paid task attempts.
         try:
             job = make_job(row, config, real)
-            if real:
+            if real or config.get("studio") or mode == "direct":
                 OpenAIImageGenerator.validate(job)
                 if any(path.exists() or path.is_symlink() for path in job.saidas):
                     raise ValueError("Saída existente sem recuperação confirmada; revise os arquivos.")
         except (ValueError, OSError) as exc:
             errors += 1
             logger.error("ID=%s: validação local: %s", key, exc)
+            if control:
+                control.event("item", id=key, status="ERRO", message=str(exc))
             if real and not dry:
                 df.at[idx, "Status"] = "ERRO"
                 df.at[idx, "Observacao"] = str(exc)
@@ -218,6 +269,8 @@ def process_queue(queue, reference_dir, generator, env):
                   f"Arquivo de referência: {'; '.join(map(str, job.referencias))}\n"
                   f"Nome do arquivo de saída: {'; '.join(p.name for p in job.saidas)}\n")
             success += 1
+            if control:
+                control.event("item", id=key, status="SIMULADO", message="Validação concluída; nenhuma chamada.")
             continue
         if not real:
             try:
@@ -226,19 +279,26 @@ def process_queue(queue, reference_dir, generator, env):
                     mock.generate(replace(job, saidas=tuple(mock_dir / p.name for p in job.saidas)))
                 logger.info("ID=%s simulado; PENDENTE preservado.", key)
                 success += 1
+                if control:
+                    control.event("item", id=key, status="SIMULADO", message="Simulação concluída; PENDENTE preservado.")
             except Exception:
                 logger.error("ID=%s falha no mock; PENDENTE preservado.", key)
                 errors += 1
             continue
         if generator is None:
             generator = OpenAIImageGenerator(api_key=env.get("OPENAI_API_KEY"), model=model, quality=quality,
-                timeout=positive_limit(env, "OPENAI_TIMEOUT_SECONDS", 120), retries=int(env.get("OPENAI_RETRIES", 2)))
+                timeout=float(env.get("OPENAI_TIMEOUT_SECONDS", 120)), retries=int(env.get("OPENAI_RETRIES", 2)), settings=settings)
         attempts = job.tentativas + 1
         previous_api = journal.records.get(key, {}).get("api_attempts", 0)
+        execution, execution_fingerprint = execution_identity(job, row)
+        signature_row = dict(row)
+        if mode == "direct":
+            signature_row["Arquivo_Referencia"] = ""
         journal.put(key, phase="prepared", fingerprint=fingerprint(job, model, quality),
                     outputs=[str(p) for p in job.saidas], task_attempts=attempts,
                     api_attempts=previous_api, hashes={}, model=model, quality=quality,
-                    row_fingerprint=row_fingerprint(row), row_fingerprint_version=ROW_FINGERPRINT_VERSION,
+                    row_fingerprint=row_fingerprint(signature_row), row_fingerprint_version=ROW_FINGERPRINT_VERSION,
+                    execution=execution, execution_fingerprint=execution_fingerprint,
                     result_dir=str(config["result_dir"]))
         df.at[idx, "Status"] = "PROCESSANDO"
         df.at[idx, "Tentativas"] = attempts
@@ -251,7 +311,7 @@ def process_queue(queue, reference_dir, generator, env):
         generator.before_attempt = before_attempt
         try:
             generator.generate(replace(job, tentativas=attempts, status="PROCESSANDO"))
-            hashes = verified_outputs(job.saidas)
+            hashes = verified_outputs(job.saidas, settings.output_format)
         except PersistenceError:
             raise
         except OutputStorageError as exc:
@@ -276,15 +336,19 @@ def process_queue(queue, reference_dir, generator, env):
             save_queue(df, queue)
             errors += 1
             logger.error("ID=%s: %s", key, message)
+            if control:
+                control.event("item", id=key, status=df.at[idx, "Status"], message=message)
             continue
         journal.put(key, phase="files_ready", hashes=hashes)
         df.at[idx, "Status"] = "CONCLUIDO"
-        df.at[idx, "Observacao"] = "Imagens PNG verificadas; registro persistido."
+        df.at[idx, "Observacao"] = f"Imagens {settings.output_format.upper()} verificadas; registro persistido."
         save_queue(df, queue)
         success += 1
         logger.info("Sucesso ID=%s", key)
-    summary = dict(processed=len(selected), success=success, errors=errors, ignored=len(df) - len(selected))
-    message = (f"Processamento finalizado\nProcessados: {len(selected)}\nSucesso: {success}\n"
+        if control:
+            control.event("item", id=key, status="CONCLUIDO", message="Imagens verificadas; registro persistido.")
+    summary = dict(processed=processed, success=success, errors=errors, ignored=len(df) - processed)
+    message = (f"Processamento finalizado\nProcessados: {processed}\nSucesso: {success}\n"
                f"Erros: {errors}\nIgnorados: {summary['ignored']}")
     print(message)
     logger.info(message)

@@ -2,6 +2,10 @@
 
 MVP Python para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
+Agora inclui a interface funcional **Afirma Image Studio**: execute `python studio.py`.
+Consulte [o guia do Studio](docs/STUDIO.md) para os dois modos de referências,
+cadastro de pastas, configurações, simulação e retomada. A API real fica bloqueada
+por padrão na interface; habilitação somente após autorização explícita.
 O script depende de um processo ativo: fechar o terminal, desligar o computador
 ou interromper o Python interrompe o lote. Não há serviço em segundo plano.
 
@@ -37,7 +41,8 @@ Todas as referências devem existir sob a pasta configurada. PNG, JPEG/JPG e
 WEBP são aceitos. Antes da chamada real, o conteúdo também é validado como
 imagem; OpenAI aceita até 16 referências, cada uma menor que 50 MB.
 
-`Nome_Saida` deve ser um nome de arquivo, sem subpastas. Na OpenAI, use `.png`.
+`Nome_Saida` deve ser um nome de arquivo, sem subpastas. Na OpenAI, use a extensão
+do formato selecionado: `.png` (padrão antigo), `.jpg`/`.jpeg` ou `.webp`.
 Para quantidade 1, `imagem_001.png` é preservado; para 3, as saídas são
 `imagem_001_01.png`, `imagem_001_02.png` e `imagem_001_03.png`.
 Arquivos existentes nunca são sobrescritos. Os arquivos reais ficam em
@@ -84,6 +89,10 @@ como metadado e não é enviado. O DRY RUN mostra exatamente esse texto.
 | OPENAI_API_KEY | Sem padrão | Necessária somente para chamada real |
 | OPENAI_IMAGE_MODEL | gpt-image-2.5-sunburst | Modelo validado neste MVP |
 | OPENAI_IMAGE_QUALITY | auto | auto, low, medium, high, xhigh, max |
+| OPENAI_IMAGE_FORMAT | png | png, jpeg, webp; nome de saída deve corresponder |
+| OPENAI_IMAGE_BACKGROUND | auto | auto, opaque, transparent; JPEG não aceita transparência |
+| OPENAI_IMAGE_SIZE | auto | auto ou largura x altura, como 1536x1024; limites no guia do Studio |
+| OPENAI_IMAGE_COMPRESSION | Ausente | Percentual inteiro 0–100 somente JPEG/WebP; omitir para PNG |
 | OPENAI_TIMEOUT_SECONDS | 120 | Timeout positivo por chamada |
 | OPENAI_RETRIES | 2 | Novas tentativas, de 0 a 5; além da chamada inicial |
 
@@ -281,8 +290,35 @@ essas correções.
 Documentação oficial consultada em 23/09/2026:
 [edição de imagens](https://developers.openai.com/api/reference/cli/resources/images/methods/edit)
 e [rate limits e retries](https://developers.openai.com/api/docs/guides/rate-limits).
-Usamos `images.edit`, modelo gpt-image-2.5-sunburst, saída PNG e retorno base64.
+Usamos `images.edit`, modelos gpt-image-2.5-sunburst e gpt-image-2.5-flare,
+saída PNG/JPEG/WebP e retorno base64. Parâmetros adicionais foram conferidos em
+06/10/2026 e estão documentados no [guia do Studio](docs/STUDIO.md).
 Outros modelos são rejeitados até validar seus parâmetros. Acesso do projeto,
 saldo e qualidade visual só podem ser confirmados em teste real autorizado.
 
-Não inclui interface gráfica, executável, serviço ou estimativa monetária.
+Inclui interface local no navegador. Não inclui executável, serviço ou estimativa monetária.
+# Referências em várias pastas
+
+É possível combinar referências de pastas independentes em uma mesma linha da fila.
+Na planilha, crie a aba opcional `Pastas_Referencias`, com estas duas colunas:
+
+| Alias | Caminho |
+| --- | --- |
+| Produtos | C:\Fotos\Produtos |
+| Marca | D:\Campanhas\Marca |
+
+Em `Arquivo_Referencia`, use `Produtos::frente.jpg; Marca::logo.png`.
+O nome antes de `::` identifica a pasta cadastrada; o restante é o caminho relativo
+do arquivo, incluindo subpastas quando necessário. Os aliases distinguem maiúsculas
+de minúsculas, começam com letra e aceitam letras sem acento, números, hífen e
+sublinhado (até 40 caracteres). Não cadastre aliases que diferem apenas pela caixa.
+
+Arquivos sem alias continuam usando `Pasta_Referencias` da aba `Configuracao`;
+essa configuração permanece obrigatória e compatível com planilhas existentes.
+Caminhos relativos das pastas são resolvidos a partir da pasta da planilha.
+Pastas inexistentes ou aliases duplicados bloqueiam a configuração. Arquivos ausentes,
+aliases desconhecidos e caminhos que escapem da pasta cadastrada são rejeitados.
+O limite existente de 1 a 16 referências por geração OpenAI permanece.
+
+O protótipo demonstra o cadastro de pastas; o seletor de pasta do aplicativo Windows
+e a gravação desse cadastro na planilha ainda não estão integrados à interface.

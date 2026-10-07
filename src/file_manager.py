@@ -18,11 +18,24 @@ def validate_reference_path(reference_dir: Path, filename: str) -> Path:
     return path
 
 
-def validate_reference_paths(reference_dir: Path, filenames: str) -> tuple[Path, ...]:
+def validate_reference_paths(reference_dir: Path, filenames: str, reference_dirs=None) -> tuple[Path, ...]:
     names = [name.strip() for name in filenames.split(";")]
     if not filenames.strip() or any(not name for name in names):
         raise ValueError("Arquivo_Referencia não informado ou lista inválida.")
-    return tuple(validate_reference_path(reference_dir, name) for name in names)
+    paths = []
+    for name in names:
+        root = reference_dir
+        if "::" in name:
+            alias, name = name.split("::", 1)
+            alias, name = alias.strip(), name.strip()
+            if alias not in (reference_dirs or {}):
+                raise ValueError(f"Pasta de referência não cadastrada: {alias}")
+            root = reference_dirs[alias]
+            # Aliased names must be relative to the explicitly selected root.
+            if Path(name).is_absolute() or Path(name).drive or name.startswith(("/", "\\")):
+                raise ValueError("Use um arquivo relativo à pasta de referência cadastrada.")
+        paths.append(validate_reference_path(root, name))
+    return tuple(paths)
 
 
 def validate_output_path(result_dir: Path, filename: str, *, check_exists=True) -> Path:
@@ -49,11 +62,12 @@ def output_paths(result_dir: Path, filename: str, quantity: int) -> tuple[Path, 
     return tuple(validate_output_path(result_dir, name) for name in names)
 
 
-def openai_output_paths(result_dir: Path, filename: str, quantity: int, *, check_exists=True) -> tuple[Path, ...]:
+def openai_output_paths(result_dir: Path, filename: str, quantity: int, *, check_exists=True, output_format="png") -> tuple[Path, ...]:
     base = Path(filename)
-    if base.suffix.lower() != ".png":
-        raise ValueError("Nome_Saida deve terminar em .png para OpenAI.")
+    extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
+    if base.suffix.lower() not in extensions[output_format]:
+        raise ValueError(f"Nome_Saida deve usar a extensão do formato {output_format.upper()} escolhido.")
     validate_output_path(result_dir, filename, check_exists=check_exists)
     names = ([filename] if quantity == 1 else
-             [f"{base.stem}_{number:02d}.png" for number in range(1, quantity + 1)])
+             [f"{base.stem}_{number:02d}{base.suffix}" for number in range(1, quantity + 1)])
     return tuple(validate_output_path(result_dir, name, check_exists=check_exists) for name in names)

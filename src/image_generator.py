@@ -4,6 +4,7 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import io
+import hashlib
 import math
 import os
 import random
@@ -11,6 +12,7 @@ import time
 
 from PIL import Image
 from src.generation_job import GenerationJob
+from src.image_settings import ImageSettings, FORMATS
 
 
 class GenerationError(RuntimeError):
@@ -49,12 +51,8 @@ class OpenAIImageGenerator(ImageGenerator):
     is_real = True
 
     def __init__(self, api_key=None, model="gpt-image-2.5-sunburst", quality="auto",
-                 timeout=120, retries=2, client=None, sleep=time.sleep):
-        # Deliberately restrict this MVP to the model/parameters verified in the docs.
-        if model != "gpt-image-2.5-sunburst":
-            raise ValueError("Modelo não validado neste MVP; use gpt-image-2.5-sunburst.")
-        if quality not in {"auto", "low", "medium", "high", "xhigh", "max"}:
-            raise ValueError("OPENAI_IMAGE_QUALITY inválida.")
+                 timeout=120, retries=2, client=None, sleep=time.sleep, settings=None):
+        self.settings = settings or ImageSettings(model=model, quality=quality)
         if not math.isfinite(timeout) or timeout <= 0 or not 0 <= retries <= 5:
             raise ValueError("Timeout deve ser positivo; OPENAI_RETRIES deve estar entre 0 e 5.")
         if client is None:
@@ -62,7 +60,8 @@ class OpenAIImageGenerator(ImageGenerator):
                 raise ValueError("OPENAI_API_KEY não configurada.")
             from openai import OpenAI
             client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
-        self.client, self.model, self.quality = client, model, quality
+        self.client = client
+        self.model, self.quality = self.settings.model, self.settings.quality
         self.retries, self.sleep = retries, sleep
         self.api_attempts = 0
         self.before_attempt = lambda number: None
@@ -76,6 +75,8 @@ class OpenAIImageGenerator(ImageGenerator):
         if not job.prompt or len(job.prompt) > 32000:
             raise ValueError("Prompt deve conter entre 1 e 32000 caracteres.")
         for path in job.referencias:
+            if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+                raise ValueError(f"Extensão de referência não suportada: {path.name}")
             if path.stat().st_size >= 50 * 1024 * 1024:
                 raise ValueError(f"Referência excede 50 MB: {path.name}")
             try:
@@ -106,18 +107,36 @@ class OpenAIImageGenerator(ImageGenerator):
     def generate(self, job):
         self.api_attempts = 0
         self.validate(job)
+        extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
         for path in job.saidas:
+            if path.suffix.lower() not in extensions[self.settings.output_format]:
+                raise ValueError("Extensão de saída incompatível com o formato selecionado.")
             if path.exists() or path.is_symlink():
                 raise FileExistsError(f"Arquivo de saída já existe: {path.name}")
+        # Send immutable copies: later changes on disk cannot alter a paid request.
+        payloads = []
+        for index, path in enumerate(job.referencias):
+            payload = path.read_bytes()
+            if job.reference_hashes and hashlib.sha256(payload).hexdigest() != job.reference_hashes[index]:
+                raise GenerationError("Referência alterada após a validação; confira a campanha antes de gerar.")
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("Conteúdo da referência inválido.")
+                image.verify()
+            payloads.append(payload)
         for attempt in range(self.retries + 1):
             with ExitStack() as stack:
-                images = [stack.enter_context(path.open("rb")) for path in job.referencias]
+                images = []
+                for path, payload in zip(job.referencias, payloads):
+                    image = stack.enter_context(io.BytesIO(payload))
+                    image.name = str(path)
+                    images.append(image)
                 # Outside the API exception handler: a journal failure MUST stop the queue.
                 self.before_attempt(attempt + 1)
                 self.api_attempts += 1
                 try:
-                    response = self.client.images.edit(model=self.model, image=images, prompt=job.prompt,
-                                                       n=job.quantidade, quality=self.quality, output_format="png")
+                    response = self.client.images.edit(image=images, prompt=job.prompt,
+                                                       n=job.quantidade, **self.settings.api_params())
                     break
                 except Exception as exc:
                     status = getattr(exc, "status_code", None)
@@ -146,7 +165,7 @@ class OpenAIImageGenerator(ImageGenerator):
             decoded = [base64.b64decode(item.b64_json, validate=True) for item in response.data]
             for payload in decoded:
                 with Image.open(io.BytesIO(payload)) as image:
-                    if image.format != "PNG":
+                    if image.format != FORMATS[self.settings.output_format]:
                         raise ValueError()
                     image.verify()
         except Exception:

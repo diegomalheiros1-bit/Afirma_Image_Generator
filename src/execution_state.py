@@ -50,12 +50,16 @@ def digest(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def verified_outputs(paths):
+def verified_outputs(paths, output_format="png"):
     hashes = {}
     for path in paths:
         with Image.open(path) as image:
-            if image.format != "PNG":
-                raise ValueError("A saída não é PNG.")
+            from src.image_settings import FORMATS
+            if image.format != FORMATS[output_format]:
+                raise ValueError(f"A saída não é {output_format.upper()}.")
+            extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
+            if Path(path).suffix.lower() not in extensions[output_format]:
+                raise ValueError("Extensão e conteúdo da saída divergem.")
             image.verify()
         hashes[str(path)] = digest(path)
     if not hashes:
@@ -130,6 +134,24 @@ def fingerprint(job, model, quality):
              [(str(path), digest(path)) for path in job.referencias],
              [str(path) for path in job.saidas]]
     return hashlib.sha256(json.dumps(value, ensure_ascii=True).encode()).hexdigest()
+
+
+def execution_identity(job, row):
+    """Version 1 of effective identity, independent of legacy row hash versions.
+
+    The ignored sheet reference column is excluded only in explicit direct mode.
+    Paths AND hashes are kept: equal basenames never merge independent files.
+    """
+    from dataclasses import asdict
+    row = dict(row)
+    if job.reference_mode == "direct":
+        row["Arquivo_Referencia"] = ""
+    value = {"version": 1, "row": row_fingerprint(row),
+             "settings": asdict(job.settings), "reference_mode": job.reference_mode,
+             "references": [{"path": str(p), "sha256": h} for p, h in
+                            zip(job.referencias, job.reference_hashes or tuple(digest(p) for p in job.referencias))],
+             "outputs": [str(p) for p in job.saidas]}
+    return value, _row_hash(value)
 
 
 ROW_FINGERPRINT_VERSION = 2
