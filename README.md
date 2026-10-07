@@ -41,6 +41,14 @@ O cadastro de pastas usa seletores nativos do Windows. A gravação de
 da sessão não são persistidos pelo botão de salvar preferências; consulte o guia
 para reabrir a campanha. Durante execução ou pausa, alterações ficam bloqueadas.
 
+## Aparência e navegação
+
+Os botões Configurações e Tema ficam abaixo do cabeçalho. O tema claro/escuro
+é salvo no navegador para o mesmo endereço local; ao iniciar em outra porta,
+a preferência do sistema é usada até uma nova escolha. Para reutilizar o endereço,
+abra o Studio com uma porta disponível fixa: `python studio.py --port 55634`.
+O layout se adapta a telas menores e oferece foco visível para navegação por teclado.
+
 ## Configurações na interface
 
 - Modelos: GPT Image 2.5 Sunburst e Flare.
