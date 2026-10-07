@@ -187,3 +187,31 @@ Ao voltar para referências pela planilha, selecione uma pasta padrão se não h
 uma configuração legada. Trabalhos interrompidos na fase `prepared` participam
 da validação e da captura de hashes antes da retomada, mesmo com status
 `PROCESSANDO`, preservando a detecção de alterações nos arquivos.
+
+## Acesso pelo celular no mesmo Wi-Fi
+
+O acesso padrão continua restrito ao computador. Para habilitar a rede local,
+consulte o IPv4 do Windows (`ipconfig`) e execute, substituindo o IP do exemplo:
+
+```powershell
+python studio.py --host 192.168.15.73 --port 55635 --no-browser
+```
+
+Abra no celular o **link completo exibido no terminal**, incluindo o parâmetro
+de acesso. O computador pode estar conectado ao roteador por cabo e o celular
+por Wi-Fi, desde que estejam na mesma rede e sem isolamento entre aparelhos.
+
+- O link concede acesso à sessão: compartilhe somente com pessoas autorizadas.
+- Uma chave nova é criada a cada inicialização; links anteriores deixam de funcionar.
+- Após abrir o link, o navegador recebe um cookie de sessão e é redirecionado para a página sem a chave na URL.
+- Acesso pela rede é via HTTP: use somente uma rede de confiança. Não configure encaminhamento de portas nem exponha à internet.
+- Somente IPv4 privado específico é aceito; endereços públicos e `0.0.0.0` são rejeitados.
+- A API paga fica obrigatoriamente bloqueada neste modo, inclusive se `--enable-api` for informado.
+- Mantenha o computador e o processo ligados. Para desligar o acesso, encerre o processo com Ctrl+C.
+- Os seletores de arquivos e pastas abrem no Windows; não há envio de fotos do celular.
+- Tema é uma preferência de cada navegador/endereço. As opções da campanha são compartilhadas entre os aparelhos que acessam a mesma sessão.
+
+Se a conexão falhar, confira o IP, a rede e o Firewall. Quando necessária, a
+liberação deve ficar restrita ao programa, porta, IP local e sub-rede usados.
+O aplicativo não altera o Firewall automaticamente. Nesta validação, o usuário
+confirmou a abertura pelo celular sem ser necessário adicionar a regra tentada.

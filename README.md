@@ -41,6 +41,34 @@ O cadastro de pastas usa seletores nativos do Windows. A gravação de
 da sessão não são persistidos pelo botão de salvar preferências; consulte o guia
 para reabrir a campanha. Durante execução ou pausa, alterações ficam bloqueadas.
 
+## Acesso pelo celular no mesmo Wi-Fi
+
+O acesso padrão continua restrito ao computador. Para habilitar a rede local,
+consulte o IPv4 do Windows (`ipconfig`) e execute, substituindo o IP do exemplo:
+
+```powershell
+python studio.py --host 192.168.15.73 --port 55635 --no-browser
+```
+
+Abra no celular o **link completo exibido no terminal**, incluindo o parâmetro
+de acesso. O computador pode estar conectado ao roteador por cabo e o celular
+por Wi-Fi, desde que estejam na mesma rede e sem isolamento entre aparelhos.
+
+- O link concede acesso à sessão: compartilhe somente com pessoas autorizadas.
+- Uma chave nova é criada a cada inicialização; links anteriores deixam de funcionar.
+- Após abrir o link, o navegador recebe um cookie de sessão e é redirecionado para a página sem a chave na URL.
+- Acesso pela rede é via HTTP: use somente uma rede de confiança. Não configure encaminhamento de portas nem exponha à internet.
+- Somente IPv4 privado específico é aceito; endereços públicos e `0.0.0.0` são rejeitados.
+- A API paga fica obrigatoriamente bloqueada neste modo, inclusive se `--enable-api` for informado.
+- Mantenha o computador e o processo ligados. Para desligar o acesso, encerre o processo com Ctrl+C.
+- Os seletores de arquivos e pastas abrem no Windows; não há envio de fotos do celular.
+- Tema é uma preferência de cada navegador/endereço. As opções da campanha são compartilhadas entre os aparelhos que acessam a mesma sessão.
+
+Se a conexão falhar, confira o IP, a rede e o Firewall. Quando necessária, a
+liberação deve ficar restrita ao programa, porta, IP local e sub-rede usados.
+O aplicativo não altera o Firewall automaticamente. Nesta validação, o usuário
+confirmou a abertura pelo celular sem ser necessário adicionar a regra tentada.
+
 ## Aparência e navegação
 
 Os botões Configurações e Tema ficam abaixo do cabeçalho. O tema claro/escuro
@@ -67,7 +95,7 @@ ou gerar no Studio define o modo efetivo, independentemente de `Dry_Run` do Exce
 
 ## Estado da validação
 
-Revisão de 06/10/2026: **89 testes automatizados passaram** em cópia isolada,
+Revisão de 06/10/2026: **91 testes automatizados passaram** em cópia isolada,
 com clientes falsos e arquivos temporários. Incluem as correções de retomada de
 trabalhos `prepared` e de seleção direta sem `Pasta_Referencias`.
 O relatório da implementação registra 12/12 itens simulados com pausa e retomada.

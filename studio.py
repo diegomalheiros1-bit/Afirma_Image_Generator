@@ -3,6 +3,9 @@ import argparse
 import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import ipaddress
+from http.cookies import SimpleCookie
+from urllib.parse import urlsplit, parse_qs
 import json
 from pathlib import Path
 import secrets
@@ -22,8 +25,17 @@ def native_select(kind):
     return json.loads(process.stdout)
 
 
-def make_server(session, port=0, picker=native_select):
+def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
+    address = ipaddress.ip_address(host)
+    if address.version != 4 or not (address.is_loopback or any(address in net for net in (
+            ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16")))):
+        raise ValueError("Use o IPv4 da rede local; endereços públicos e 0.0.0.0 não são aceitos.")
+    lan = not address.is_loopback
+    if lan and session.allow_api:
+        raise ValueError("Acesso pela rede local mantém a API paga bloqueada.")
     token = secrets.token_urlsafe(32)
+    access_key = secrets.token_urlsafe(32) if lan else None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -36,22 +48,48 @@ def make_server(session, port=0, picker=native_select):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             self.end_headers()
             self.wfile.write(payload)
 
         def authorize(self, require_token=True):
-            expected = f"127.0.0.1:{self.server.server_port}"
+            expected = f"{host}:{self.server.server_port}"
             if self.headers.get("Host") != expected:
                 raise PermissionError("Host não autorizado.")
             if self.headers.get("Origin") not in (None, "http://" + expected):
                 raise PermissionError("Origem não autorizada.")
+            if lan:
+                cookies = SimpleCookie()
+                try:
+                    cookies.load(self.headers.get("Cookie", ""))
+                except Exception:
+                    raise PermissionError("Use o link de acesso exclusivo mostrado no computador.") from None
+                cookie = cookies.get("afirma_access")
+                if not cookie or not secrets.compare_digest(cookie.value, access_key):
+                    raise PermissionError("Use o link de acesso exclusivo mostrado no computador.")
             if require_token and not secrets.compare_digest(self.headers.get("X-Afirma-Token", ""), token):
                 raise PermissionError("Sessão não autorizada.")
 
         def do_GET(self):
             try:
+                request = urlsplit(self.path)
+                if lan and request.path == "/" and request.query:
+                    expected = f"{host}:{self.server.server_port}"
+                    supplied = parse_qs(request.query).get("access", [""])[0]
+                    if (self.headers.get("Host") != expected or
+                            self.headers.get("Origin") not in (None, "http://" + expected) or
+                            not secrets.compare_digest(supplied, access_key)):
+                        raise PermissionError("Link de acesso inválido.")
+                    self.send_response(303)
+                    self.send_header("Location", "/")
+                    self.send_header("Set-Cookie", f"afirma_access={access_key}; HttpOnly; SameSite=Strict; Path=/")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 self.authorize(require_token=self.path != "/")
                 if self.path == "/":
                     html = (ROOT / "web" / "studio.html").read_text("utf-8")
@@ -123,21 +161,25 @@ def make_server(session, port=0, picker=native_select):
             except Exception:
                 self.respond(500, {"error": "Falha local. Preserve a planilha e o histórico; consulte o terminal."})
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     server.session_token = token
+    server.access_key = access_key
     return server
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Abre o Afirma Image Studio local.")
+    parser.add_argument("--host", default="127.0.0.1", help="IPv4 local para acesso Wi-Fi opcional e autenticado.")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--enable-api", action="store_true", help="Habilita o botão real; somente após autorização explícita.")
     parser.add_argument("--settings", type=Path, default=ROOT / ".studio-settings.json")
     args = parser.parse_args()
     session = StudioSession(args.settings, allow_api=args.enable_api)
-    server = make_server(session, args.port)
-    url = f"http://127.0.0.1:{server.server_port}/"
+    server = make_server(session, args.port, host=args.host)
+    url = f"http://{args.host}:{server.server_port}/"
+    if server.access_key:
+        url += "?access=" + server.access_key
     print(f"Afirma Studio: {url}\nAPI real: {'habilitada' if args.enable_api else 'BLOQUEADA'}", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
