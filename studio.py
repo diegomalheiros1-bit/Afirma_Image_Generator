@@ -7,6 +7,7 @@ import ipaddress
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit, parse_qs
 import json
+import os
 from pathlib import Path
 import secrets
 import subprocess
@@ -143,6 +144,14 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                         session.save_folders()
                     elif self.path == "/api/preferences":
                         session.set_preferences(data["preferences"], persist=data.get("persist", False))
+                    elif self.path == "/api/credential":
+                        if lan:
+                            raise PermissionError("Configure a chave somente no computador local.")
+                        session.set_api_key(data["key"], persist=data.get("persist", False))
+                    elif self.path == "/api/credential/clear":
+                        if lan:
+                            raise PermissionError("Remova a chave somente no computador local.")
+                        session.clear_api_key()
                     elif self.path == "/api/validate":
                         session.idle()
                         result = session.validate_campaign()
@@ -168,12 +177,14 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
 
 
 if __name__ == "__main__":
+    default_settings = (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Afirma Image Studio" / "settings.json"
+                        if getattr(sys, "frozen", False) else ROOT / ".studio-settings.json")
     parser = argparse.ArgumentParser(description="Abre o Afirma Image Studio local.")
     parser.add_argument("--host", default="127.0.0.1", help="IPv4 local para acesso Wi-Fi opcional e autenticado.")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--enable-api", action="store_true", help="Habilita o botão real; somente após autorização explícita.")
-    parser.add_argument("--settings", type=Path, default=ROOT / ".studio-settings.json")
+    parser.add_argument("--settings", type=Path, default=default_settings)
     args = parser.parse_args()
     session = StudioSession(args.settings, allow_api=args.enable_api)
     server = make_server(session, args.port, host=args.host)

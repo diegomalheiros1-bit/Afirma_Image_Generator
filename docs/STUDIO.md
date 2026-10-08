@@ -1,5 +1,21 @@
 # Afirma Image Studio
 
+O painel de progresso mostra somente a sessão atual. Após selecionar uma
+planilha, abra **Última execução desta planilha** para consultar o log salvo em
+`<planilha>.studio-run.json`: horários UTC, duração total e por item, status,
+eventos e resumo. O arquivo não inclui chave da API nem prompts. As próximas
+execuções também preservam cada registro em `<planilha>.studio-runs/`, sem
+substituir os anteriores. O piloto real de 08/10/2026 tem ainda
+`output/piloto-real-tabela-2026-10-08/LOG_DETALHADO.md`,
+reconstruído a partir das respostas e imagens preservadas. O custo ali exibido
+é uma estimativa, não o faturamento confirmado.
+
+O resumo da fila distingue imagens pendentes de imagens concluídas. As imagens
+concluídas somam `Quantidade` somente das linhas `CONCLUIDO`; simulações não
+entram nessa contagem. Os campos de planilha e pasta de saída exibem ícone e
+seta de seleção. O histórico mostra horários de Brasília, duração e status
+por item em uma tabela com rolagem horizontal em telas estreitas.
+
 Interface funcional local sobre o mesmo processamento de `main.py`. Usa o logo,
 paleta roxa, painéis claros e organização do protótipo aprovado. Sem dependências
 web, CDN, upload para terceiros, serviço público ou armazenamento do navegador.
@@ -129,9 +145,15 @@ Fontes oficiais conferidas em 06/10/2026:
   parâmetros. `--settings <arquivo>` permite usar outro destino local.
 - Planilha selecionada, modo, fotos e cadastro não salvo são da sessão e se perdem
   ao fechar o servidor. Fotos nunca são colocadas em localStorage/browser storage.
-- Chaves continuam somente no `.env` existente ou no ambiente. Não há campo de
-  chave, armazenamento pelo navegador, alteração de credencial ou inclusão da
-  chave nas preferências, HTML, JSON de estado ou logs do servidor.
+- Em **Opções avançadas**, a chave pode ser usada só nesta sessão ou salva com
+  a proteção DPAPI do usuário atual do Windows. A chave da interface tem
+  precedência sobre o ambiente e o `.env`; remover a chave do Studio não apaga
+  essas fontes externas. O arquivo protegido fica ao lado de `--settings`, com
+  o sufixo `.api-key.dpapi`. Não é portável para outro usuário/computador.
+  O navegador recebe apenas o estado da configuração, nunca a chave de volta.
+  A chave não entra nas preferências, planilha, JSON de estado ou logs. A
+  configuração de credencial só é aceita no servidor local, sem acesso pela LAN.
+  Num executável, o destino padrão das preferências fica em `%LOCALAPPDATA%`.
 
 ## Histórico e retomada
 

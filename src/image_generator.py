@@ -106,6 +106,8 @@ class OpenAIImageGenerator(ImageGenerator):
 
     def generate(self, job):
         self.api_attempts = 0
+        self.last_usage = None
+        self.last_request_id = None
         self.validate(job)
         extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
         for path in job.saidas:
@@ -137,6 +139,14 @@ class OpenAIImageGenerator(ImageGenerator):
                 try:
                     response = self.client.images.edit(image=images, prompt=job.prompt,
                                                        n=job.quantidade, **self.settings.api_params())
+                    usage = getattr(response, "usage", None)
+                    if usage is not None:
+                        image_input = getattr(getattr(usage, "input_tokens_details", None), "image_tokens", None)
+                        text_input = getattr(getattr(usage, "input_tokens_details", None), "text_tokens", None)
+                        image_output = getattr(getattr(usage, "output_tokens_details", None), "image_tokens", None)
+                        self.last_usage = {"image_input": image_input, "text_input": text_input,
+                                           "image_output": image_output}
+                    self.last_request_id = getattr(response, "_request_id", None)
                     break
                 except Exception as exc:
                     status = getattr(exc, "status_code", None)

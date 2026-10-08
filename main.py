@@ -247,6 +247,8 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
         key = ids[idx]
         row = df.loc[idx]
         logger.info("Iniciado ID=%s", key)
+        if control:
+            control.event("item_start", id=key)
         # Validation failures are local and do not count as paid task attempts.
         try:
             job = make_job(row, config, real)
@@ -284,6 +286,8 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
             except Exception:
                 logger.error("ID=%s falha no mock; PENDENTE preservado.", key)
                 errors += 1
+                if control:
+                    control.event("item", id=key, status="ERRO", message="Falha na simulação; PENDENTE preservado.")
             continue
         if generator is None:
             generator = OpenAIImageGenerator(api_key=env.get("OPENAI_API_KEY"), model=model, quality=quality,
@@ -346,7 +350,10 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
         success += 1
         logger.info("Sucesso ID=%s", key)
         if control:
-            control.event("item", id=key, status="CONCLUIDO", message="Imagens verificadas; registro persistido.")
+            control.event("item", id=key, status="CONCLUIDO", message="Imagens verificadas; registro persistido.",
+                          outputs=[str(path) for path in job.saidas], api_attempts=generator.api_attempts,
+                          usage=getattr(generator, "last_usage", None),
+                          request_id=getattr(generator, "last_request_id", None))
     summary = dict(processed=processed, success=success, errors=errors, ignored=len(df) - processed)
     message = (f"Processamento finalizado\nProcessados: {processed}\nSucesso: {success}\n"
                f"Erros: {errors}\nIgnorados: {summary['ignored']}")

@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -48,6 +49,28 @@ class StudioTests(IsolatedTest):
     def generator(self, settings=None):
         return OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.api)), settings=settings)
 
+    def test_api_key_session_and_protected_storage_never_enter_state(self):
+        if os.name != 'nt':
+            self.skipTest('DPAPI is Windows-only')
+        key = 'sk-test-placeholder-only-1234567890'
+        external = 'sk-other-placeholder-only-1234567890'
+        self.assertEqual(self.session.api_key_status(), 'missing')
+        self.session.set_api_key(key)
+        self.assertEqual(self.session.api_key_status(), 'session')
+        self.assertEqual(self.session.resolve_api_key(external), key)
+        self.assertNotIn(key, json.dumps(self.session.state()))
+        self.assertFalse(self.session.credential_store.exists())
+        self.session.set_api_key(key, persist=True)
+        self.assertEqual(self.session.api_key_status(), 'saved')
+        self.assertNotIn(key.encode(), self.session.credential_store.path.read_bytes())
+        reopened = StudioSession(self.session.settings_path, env={'OPENAI_API_KEY': external})
+        self.assertEqual(reopened.api_key_status(), 'saved')
+        self.assertEqual(reopened.resolve_api_key(external), key)
+        self.assertNotIn(key, json.dumps(reopened.state()))
+        reopened.clear_api_key()
+        self.assertEqual(reopened.api_key_status(), 'external')
+        self.assertFalse(reopened.credential_store.exists())
+
     def edit_queue(self, fn):
         book = load_workbook(self.queue)
         try:
@@ -86,6 +109,7 @@ class StudioTests(IsolatedTest):
             "image_limit": 1,
             "invalid_quantities": 0,
             "completed_items": 1,
+            "completed_images": 3,
             "review_items": 1,
         })
         self.assertEqual(digest(queue), before)
@@ -290,6 +314,18 @@ class StudioTests(IsolatedTest):
         self.assertEqual(digest(self.queue), before)
         self.assertFalse(Path(str(self.queue)+'.state.json').exists())
         self.assertEqual(self.api.call_count, 0)
+        log_path = Path(str(self.queue) + '.studio-run.json')
+        log = json.loads(log_path.read_text(encoding='utf-8'))
+        self.assertEqual(log['status'], 'Finalizado')
+        self.assertEqual(log['result']['success'], 8)
+        self.assertEqual(len([event for event in log['events'] if event['type'] == 'item_end']), 8)
+        self.assertTrue(all(event['elapsed_seconds'] >= 0 for event in log['events'] if event['type'] == 'item_end'))
+        self.assertNotIn('OPENAI_API_KEY', log_path.read_text(encoding='utf-8'))
+        archive = Path(str(self.queue) + '.studio-runs') / (log['run_id'] + '.json')
+        self.assertEqual(json.loads(archive.read_text(encoding='utf-8')), log)
+        reopened = StudioSession(self.root / 'other-settings.json', env={})
+        reopened.choose_queue(self.queue)
+        self.assertEqual(reopened.state()['run_log']['result']['success'], 8)
         with self.assertRaisesRegex(ValueError, 'bloqueada'):
             self.session.start(real=True)
 
@@ -342,6 +378,17 @@ class StudioTests(IsolatedTest):
         self.assertIn('bloqueada',body.decode())
         self.assertEqual(request('/api/thumbnail',{'index':0},token=server.session_token)[0],400)
         self.assertEqual(request('/.env',token=server.session_token)[0],404)
+        dummy_key = 'sk-test-placeholder-only-1234567890'
+        self.assertEqual(request('/api/credential', {'key': dummy_key}, origin='https://untrusted.test',
+                                 token=server.session_token)[0], 403)
+        status, body = request('/api/credential', {'key': dummy_key}, token=server.session_token)
+        self.assertEqual(status, 200)
+        self.assertNotIn(dummy_key.encode(), body)
+        status, body = request('/api/state', token=server.session_token)
+        self.assertEqual(json.loads(body)['api_key_status'], 'session')
+        self.assertNotIn(dummy_key.encode(), body)
+        self.assertEqual(request('/api/credential/clear', {}, token=server.session_token)[0], 200)
+        self.assertEqual(self.session.api_key_status(), 'missing')
 
     def test_non_png_interrupted_recovery_uses_original_format(self):
         for fmt in ('jpeg', 'webp'):

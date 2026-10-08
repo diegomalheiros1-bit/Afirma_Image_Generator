@@ -106,7 +106,8 @@ class Journal:
         self.path = Path(str(queue.resolve()) + ".state.json")
         try:
             self.records = json.loads(self.path.read_text("utf-8")) if self.path.exists() else {}
-            if not isinstance(self.records, dict):
+            if (not isinstance(self.records, dict) or
+                    any(not isinstance(record, dict) for record in self.records.values())):
                 raise ValueError()
         except (ValueError, OSError):
             raise PersistenceError("Registro de execução ilegível; restaure o backup antes de gerar.") from None

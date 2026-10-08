@@ -1,5 +1,6 @@
 .env
 .studio-settings.json
+*.api-key.dpapi
 __pycache__/
 *.pyc
 .venv/

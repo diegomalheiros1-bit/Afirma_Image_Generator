@@ -1,6 +1,7 @@
 """Local Studio state and worker; no browser storage or credentials in settings."""
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -9,8 +10,10 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 
 from PIL import Image
+from src.credential_store import CredentialStore
 from src.excel_reader import load_config, load_queue
 from src.execution_state import queue_lock, PersistenceError, digest
 from src.image_settings import ImageSettings
@@ -125,6 +128,8 @@ class StudioSession:
         self.allow_api = allow_api
         self.env = env  # Defaults are extracted locally; secrets never enter state/preferences.
         self.credential_file = Path(__file__).resolve().parents[1] / ".env"
+        self.credential_store = CredentialStore(self.settings_path)
+        self._session_api_key = None
         self.queue = None
         self.queue_summary = None
         self.photos = []
@@ -138,6 +143,7 @@ class StudioSession:
             defaults = {**dotenv_values(self.credential_file), **os.environ}
         else:
             defaults = env
+        self._external_api_key_available = bool(defaults.get("OPENAI_API_KEY"))
         self.preferences.update(image=asdict(ImageSettings.from_env(defaults)),
                                 timeout=float(defaults.get("OPENAI_TIMEOUT_SECONDS", 120)),
                                 retries=int(defaults.get("OPENAI_RETRIES", 2)),
@@ -156,10 +162,71 @@ class StudioSession:
         self.total = 0
         self.status = "Pronto"
         self.error = ""
+        self.run_log = None
+        self._run_clock = None
+        self._item_clocks = {}
+
+    @staticmethod
+    def _stamp():
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def _save_run_log(self):
+        """Keep a credential-free, atomic record beside the selected workbook."""
+        if not self.run_log or not self.queue:
+            return
+        path = Path(str(self.queue) + ".studio-run.json")
+        paths = [path]
+        if self.run_log.get("run_id"):
+            archive = Path(str(self.queue) + ".studio-runs")
+            archive.mkdir(exist_ok=True)
+            paths.insert(0, archive / (self.run_log["run_id"] + ".json"))
+        for destination in paths:
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=destination.parent,
+                                                 prefix=".studio-run-", delete=False) as handle:
+                    temporary = Path(handle.name)
+                    json.dump(self.run_log, handle, ensure_ascii=False, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, destination)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
 
     def idle(self):
         if self.active:
             raise ValueError("Execução ativa: pause/retome ou encerre antes de alterar a campanha.")
+
+    def api_key_status(self):
+        if self._session_api_key:
+            return "session"
+        if self.credential_store.exists():
+            return "saved"
+        return "external" if self._external_api_key_available else "missing"
+
+    def set_api_key(self, key, *, persist=False):
+        with self.lock:
+            self.idle()
+            if type(key) is not str or type(persist) is not bool:
+                raise ValueError("Informe uma chave válida.")
+            key = key.strip()
+            if not 20 <= len(key) <= 512 or any(character.isspace() or ord(character) < 32 for character in key):
+                raise ValueError("Informe uma chave de API válida, sem espaços.")
+            if persist:
+                self.credential_store.save(key)
+                self._session_api_key = None
+            else:
+                self._session_api_key = key
+
+    def clear_api_key(self):
+        with self.lock:
+            self.idle()
+            self.credential_store.clear()
+            self._session_api_key = None
+
+    def resolve_api_key(self, external=None):
+        return self._session_api_key or self.credential_store.read() or external
 
     @staticmethod
     def checked_preferences(values):
@@ -239,6 +306,14 @@ class StudioSession:
             execution_images += quantity
         completed = frame["Status"].map(
             lambda value: isinstance(value, str) and value.strip().upper() in {"CONCLUIDO", "SIMULADO"})
+        completed_real = frame["Status"].map(
+            lambda value: isinstance(value, str) and value.strip().upper() == "CONCLUIDO")
+        completed_images = 0
+        for _, row in frame.loc[prompts & completed_real].iterrows():
+            try:
+                completed_images += parse_quantity(row.get("Quantidade"))
+            except ValueError:
+                continue
         review = frame["Status"].map(
             lambda value: isinstance(value, str) and value.strip().upper() in {"REVISAO", "ERRO"})
         self.queue_summary = {
@@ -251,6 +326,7 @@ class StudioSession:
             "image_limit": self.preferences["max_images"],
             "invalid_quantities": invalid_quantities,
             "completed_items": int((prompts & completed).sum()),
+            "completed_images": completed_images,
             "review_items": int((prompts & review).sum()),
         }
 
@@ -264,22 +340,37 @@ class StudioSession:
                 if self.mode != "direct":
                     raise
                 config = load_config(path, reference_mode="direct")
+            previous = (self.queue, self.queue_summary)
             self.queue = path
+            try:
+                self._refresh_queue_summary(config)
+            except Exception:
+                self.queue, self.queue_summary = previous
+                raise
             self.folders = [{"alias": a, "path": str(p)} for a, p in config["reference_dirs"].items()]
             self.default_folder = next((a for a, p in config["reference_dirs"].items()
                                         if p == config["reference_dir"]), "")
             self.legacy_root = config["reference_dir"]
-            self._refresh_queue_summary(config)
             self.items, self.result, self.error = [], {}, ""
+            report = Path(str(path) + ".studio-run.json")
+            try:
+                self.run_log = json.loads(report.read_text("utf-8")) if report.exists() else None
+            except (ValueError, OSError):
+                self.run_log = None
 
     def set_mode(self, mode):
         with self.lock:
             self.idle()
             if mode not in {"spreadsheet", "direct"}:
                 raise ValueError("Modo inválido.")
+            previous = self.mode
             self.mode = mode
-            if self.queue:
-                self._refresh_queue_summary()
+            try:
+                if self.queue:
+                    self._refresh_queue_summary()
+            except Exception:
+                self.mode = previous
+                raise
     def add_photos(self, paths):
         with self.lock:
             self.idle()
@@ -391,8 +482,26 @@ class StudioSession:
         with self.lock:
             if kind == "plan":
                 self.total = values["total"]
+                self.run_log["planned_items"] = values["total"]
+                self.run_log["planned_images"] = values["images"]
+            elif kind == "item_start":
+                self._item_clocks[values["id"]] = time.monotonic()
+                self.run_log["events"].append({"at": self._stamp(), "type": "item_start", "id": values["id"]})
             elif kind == "item":
                 self.items.append(values)
+                started = self._item_clocks.pop(values["id"], None)
+                event = {"at": self._stamp(), "type": "item_end", "id": values["id"],
+                    "status": values["status"], "message": values["message"],
+                    "elapsed_seconds": round(time.monotonic() - started, 3) if started is not None else None}
+                for key in ("outputs", "api_attempts", "usage", "request_id"):
+                    if values.get(key) is not None:
+                        event[key] = values[key]
+                self.run_log["events"].append(event)
+            if self.run_log:
+                try:
+                    self._save_run_log()
+                except OSError:
+                    self.run_log["log_error"] = "Falha ao persistir o log; preserve a planilha e confira o disco."
 
     def start(self, real=False):
         with self.lock:
@@ -407,10 +516,24 @@ class StudioSession:
             queue = self.queue
             self.active = True
             self.error, self.result, self.items, self.total = "", {}, [], 0
+            self._run_clock = time.monotonic()
+            self._item_clocks = {}
+            self.run_log = {"version": 1, "run_id": uuid.uuid4().hex, "started_at": self._stamp(), "finished_at": None,
+                            "elapsed_seconds": None, "mode": "real" if real else "simulation",
+                            "status": "running", "planned_items": len(plan["jobs"]),
+                            "planned_images": sum(job["quantity"] for job in plan["jobs"]),
+                            "settings": {"image": deepcopy(prefs["image"]), "max_jobs": prefs["max_jobs"],
+                                         "max_images": prefs["max_images"], "timeout": prefs["timeout"],
+                                         "retries": prefs["retries"]}, "events": [], "result": {}}
+            try:
+                self._save_run_log()
+            except OSError:
+                self.run_log["log_error"] = "Falha ao persistir o log; preserve a planilha e confira o disco."
             self.status = "Gerando" if real else "Simulando"
             self.control = RunControl(self._event, simulation_delay=0 if real else 0.25)
             control = self.control
             environment = dict(self.env) if self.env is not None else None
+            session_api_key = self._session_api_key
 
             def work():
                 from main import main
@@ -420,6 +543,10 @@ class StudioSession:
                         effective_env = {**dotenv_values(self.credential_file), **os.environ}
                     else:
                         effective_env = dict(environment or {})
+                    if real:
+                        selected_key = session_api_key or self.credential_store.read() or effective_env.get("OPENAI_API_KEY")
+                        if selected_key:
+                            effective_env["OPENAI_API_KEY"] = selected_key
                     effective_env.update(IMAGE_PROVIDER="openai" if real else "simulation", DRY_RUN="NAO" if real else "SIM",
                                          FIRST_RUN_SAFE_MODE="SIM" if prefs["safe_mode"] else "NAO",
                                          MAX_JOBS_PER_RUN=str(prefs["max_jobs"]), MAX_IMAGES_PER_RUN=str(prefs["max_images"]),
@@ -434,7 +561,23 @@ class StudioSession:
                         self.status = "Erro"
                 finally:
                     with self.lock:
+                        try:
+                            self._refresh_queue_summary()
+                        except Exception:
+                            self.queue_summary = None
+                            if not self.error:
+                                self.error = "Execução encerrada; não foi possível atualizar o resumo da planilha. Selecione-a novamente para conferir os estados."
                         self.active = False
+                        self.run_log["finished_at"] = self._stamp()
+                        self.run_log["elapsed_seconds"] = round(time.monotonic() - self._run_clock, 3)
+                        self.run_log["status"] = self.status
+                        self.run_log["result"] = dict(self.result)
+                        if self.error:
+                            self.run_log["error"] = self.error
+                        try:
+                            self._save_run_log()
+                        except OSError:
+                            self.run_log["log_error"] = "Falha ao persistir o log; preserve a planilha e confira o disco."
 
             self.worker = threading.Thread(target=work, name="afirma-campaign", daemon=False)
             self.worker.start()
@@ -456,4 +599,5 @@ class StudioSession:
                         preferences=deepcopy(self.preferences), active=self.active,
                         paused=bool(self.control and self.control.paused), status=self.status,
                         total=self.total, items=deepcopy(self.items), result=dict(self.result), error=self.error,
-                        allow_api=self.allow_api)
+                        run_log=deepcopy(self.run_log),
+                        allow_api=self.allow_api, api_key_status=self.api_key_status())

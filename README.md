@@ -101,7 +101,10 @@ ou gerar no Studio define o modo efetivo, independentemente de `Dry_Run` do Exce
 
 ## Estado da validação
 
-Revisão de 08/10/2026: **95 testes automatizados passaram** com clientes falsos
+Consulte a [revisão completa de 08/10/2026](docs/REVISAO_2026-10-08.md)
+para as correções, evidências e critérios do piloto real.
+
+Revisão de 08/10/2026: **102 testes automatizados passaram** com clientes falsos
 e arquivos temporários. Incluem a leitura do resumo da planilha sem escrita,
 o cálculo dos limites da próxima execução e as correções de retomada de trabalhos
 `prepared` e de seleção direta sem `Pasta_Referencias`.
@@ -123,9 +126,12 @@ python -m pip install -r requirements.txt
 ```
 
 Se ainda não houver `.env`, copie `.env.example` para `.env`.
-Preencha `OPENAI_API_KEY` apenas nesse arquivo ou na variável de ambiente.
+Para o CLI, preencha `OPENAI_API_KEY` no `.env` ou na variável de ambiente.
+No Studio, **Configurações > Opções avançadas** também permite informar a chave
+somente para a sessão ou salvá-la protegida para o usuário atual do Windows.
 Nunca coloque a chave no Excel, no código, nos logs ou em commits.
-O ambiente tem precedência sobre o `.env`; `DRY_RUN` tem precedência sobre
+No Studio, a chave informada na interface tem precedência sobre o ambiente e o
+`.env`. No CLI, o ambiente tem precedência sobre o `.env`; `DRY_RUN` tem precedência sobre
 `Dry_Run` da aba `Configuracao`. Feche o Excel antes de executar o programa.
 
 ## Planilha e referências
