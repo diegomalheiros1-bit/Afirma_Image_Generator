@@ -20,11 +20,13 @@ python studio.py
 O programa abre a interface no navegador em `http://127.0.0.1:<porta>/`.
 Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
 
-1. Escolha como informar as referências.
-2. Selecione a planilha da campanha com os prompts e nomes de saída.
-3. No modo planilha, confira as pastas; no modo direto, adicione as fotos.
-4. Abra Configurações e aplique os parâmetros de imagem e limites.
-5. Valide a campanha e execute a simulação antes de considerar a API real.
+1. Selecione a planilha da campanha com os prompts e nomes de saída.
+2. Escolha como informar as referências: por linha da planilha ou fotos comuns
+   selecionadas no software.
+3. Confira as pastas de referências, a pasta de saída e o resumo da fila.
+4. Abra Configurações, ajuste os parâmetros e limites; os ícones `?` explicam
+   cada campo principal. Em Opções avançadas, informe a chave se necessário.
+5. Use **Conferir campanha** e faça uma simulação antes de uma execução real.
 
 | Modo | Referências utilizadas |
 | --- | --- |
@@ -36,8 +38,12 @@ No modo direto, `Arquivo_Referencia` é ignorado e pode estar vazio ou ausente;
 necessária para os demais dados. Não há fallback automático entre os modos.
 Ao voltar ao modo planilha sem configuração legada, escolha uma pasta padrão.
 
-Ao selecionar a planilha, o Studio resume os itens com prompt, os itens pendentes,
-as imagens previstas e o tamanho da próxima execução. O lote respeita os limites
+Ao selecionar a planilha, o Studio resume itens com prompt, itens e imagens
+pendentes, imagens concluídas e o tamanho da próxima execução. O painel de
+progresso conta somente a sessão ativa; **Última execução desta planilha** exibe
+o histórico anterior, com horários, duração, estado por item, detalhes da
+chamada e custo estimado quando houver dados de uso. A estimativa não confirma
+o valor faturado pela API. O lote respeita os limites
 de jobs e imagens configurados, incluindo `Limite_Por_Execucao`; itens que excedem
 a capacidade ficam pendentes para execuções futuras. Quantidades inválidas são
 indicadas e não entram na estimativa.
@@ -82,6 +88,9 @@ Os botões Configurações e Tema ficam abaixo do cabeçalho. O tema claro/escur
 a preferência do sistema é usada até uma nova escolha. Para reutilizar o endereço,
 abra o Studio com uma porta disponível fixa: `python studio.py --port 55634`.
 O layout se adapta a telas menores e oferece foco visível para navegação por teclado.
+Os campos de planilha e pasta de saída têm ícone e seta de seleção. As etapas
+**Prepare sua campanha** e **Acompanhe sua campanha** organizam a tela; os
+botões `?` mostram ajuda ao clicar, passar o ponteiro ou usar o teclado.
 
 ## Configurações na interface
 
@@ -92,6 +101,8 @@ O layout se adapta a telas menores e oferece foco visível para navegação por 
 - Resolução: automática, três tamanhos predefinidos ou dimensões personalizadas validadas.
 - Compressão: opcional, de 0 a 100%, somente para JPEG/WebP, separada da qualidade de geração.
 - Pasta de saída, timeout, novas tentativas, limites de jobs/imagens e modo seguro.
+- Em **Opções avançadas**, chave da API para esta sessão ou salva protegida no
+  usuário atual do Windows; o campo não mostra uma chave armazenada ao reabrir.
 
 Preferências podem ser aplicadas à sessão ou salvas em `.studio-settings.json`,
 sem credenciais. Os padrões vêm do ambiente sobre o `.env`; preferências salvas
@@ -101,8 +112,8 @@ ou gerar no Studio define o modo efetivo, independentemente de `Dry_Run` do Exce
 
 ## Estado da validação
 
-Consulte a [revisão completa de 08/10/2026](docs/REVISAO_2026-10-08.md)
-para as correções, evidências e critérios do piloto real.
+Consulte a [revisão pré-piloto de 08/10/2026](docs/REVISAO_2026-10-08.md)
+para as correções e critérios usados antes da execução real.
 
 Revisão de 08/10/2026: **102 testes automatizados passaram** com clientes falsos
 e arquivos temporários. Incluem a leitura do resumo da planilha sem escrita,
@@ -110,10 +121,15 @@ o cálculo dos limites da próxima execução e as correções de retomada de tr
 `prepared` e de seleção direta sem `Pasta_Referencias`.
 O relatório da implementação registra 12/12 itens simulados com pausa e retomada.
 Os seletores nativos possuem testes de contrato; o fluxo de navegador registrado
-usou seleção fictícia pré-carregada. O teste pago permanece pendente de autorização.
+usou seleção fictícia pré-carregada. Em 08/10/2026, um piloto autorizado com a
+planilha real concluiu **3 imagens em 3 itens**. A retomada registrada durou
+56,217 s e estimou US$ 0,060884 em uso da API; esse número não é a cobrança
+confirmada. Planilha, referências, imagens e log detalhado permanecem somente
+na máquina local, fora do Git. O Studio mostra o histórico da planilha selecionada.
 
-Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md)
-e [proposta do teste real](docs/TESTE_REAL_PROPOSTO.md).
+Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md),
+[revisão pré-piloto](docs/REVISAO_2026-10-08.md) e
+[roteiro inicial de três imagens](docs/PILOTO_REAL_3_IMAGENS.md).
 
 ## Instalação
 
@@ -232,10 +248,11 @@ Sucesso no resumo desses modos significa validação/simulação bem-sucedida,
 não uma imagem gerada. DRY RUN não altera o Excel nem o registro de execução;
 o arquivo de lock local e o log podem ser criados.
 
-## Teste real — somente após autorização explícita
+## Nova execução real
 
-O roteiro abaixo é para o CLI e somente deve ser executado após revisar a
-simulação e autorizar o gasto. Para o Studio, consulte a proposta de teste real.
+O roteiro abaixo é para novas execuções pelo CLI. Revise a simulação, os
+limites e o gasto antes de habilitar chamadas pagas. Para usar o Studio, consulte
+o [guia da interface](docs/STUDIO.md).
 
 ### Validar primeiro uma imagem real
 
@@ -409,10 +426,13 @@ e [rate limits e retries](https://developers.openai.com/api/docs/guides/rate-lim
 Usamos `images.edit`, modelos gpt-image-2.5-sunburst e gpt-image-2.5-flare,
 saída PNG/JPEG/WebP e retorno base64. Parâmetros adicionais foram conferidos em
 06/10/2026 e estão documentados no [guia do Studio](docs/STUDIO.md).
-Outros modelos são rejeitados até validar seus parâmetros. Acesso do projeto,
-saldo e qualidade visual só podem ser confirmados em teste real autorizado.
+Outros modelos são rejeitados até validar seus parâmetros. Acesso da conta,
+saldo e qualidade visual devem ser avaliados para cada nova campanha; o piloto
+de três imagens não garante custo ou resultado iguais.
 
-Inclui interface local no navegador. Não inclui executável, serviço ou estimativa monetária.
+Inclui interface local no navegador e estimativa de custo no histórico quando
+há dados de uso. Ainda não inclui executável nem serviço em segundo plano.
+
 ## Referências em várias pastas
 
 É possível combinar referências de pastas independentes em uma mesma linha da fila.
