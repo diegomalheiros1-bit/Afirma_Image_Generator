@@ -84,6 +84,17 @@ class StageTwoTests(IsolatedTest):
             with self.assertRaises(ValueError):
                 load_config(queue)
 
+    def test_integer_valued_float_limit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            queue, _ = self.make_queue(Path(folder), limit=1.0)
+            self.assertEqual(load_config(queue)["limit"], 1)
+
+    def test_fractional_limit_is_invalid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            queue, _ = self.make_queue(Path(folder), limit=1.5)
+            with self.assertRaisesRegex(ValueError, "inteiro positivo"):
+                load_config(queue)
+
 
 if __name__ == "__main__":
     unittest.main()

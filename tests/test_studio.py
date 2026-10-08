@@ -65,6 +65,46 @@ class StudioTests(IsolatedTest):
         self.assertEqual(digest(self.queue), before)
         self.assertFalse(Path(str(self.queue) + '.state.json').exists())
 
+    def test_spreadsheet_selection_reports_prompt_and_image_counts_read_only(self):
+        rows = [
+            [1, "Prompt", "", "ok.png", "1.png", "PENDENTE", 0, "", "", "", "", "", 2, ""],
+            [2, "", "Variation", "ok.png", "2.png", "PENDENTE", 0, "", "", "", "", "", None, ""],
+            [3, "Prompt", "", "ok.png", "3.png", "CONCLUIDO", 0, "", "", "", "", "", 3, ""],
+            [4, "Prompt", "", "ok.png", "4.png", "REVISAO", 0, "", "", "", "", "", 1, ""],
+            [5, "", "", "ok.png", "5.png", "PENDENTE", 0, "", "", "", "", "", 5, ""],
+        ]
+        queue, _, _ = StageThreeTests().make_queue(self.root / "summary", rows, optional=True)
+        before = digest(queue)
+        self.session.choose_queue(queue)
+        self.assertEqual(self.session.state()["queue_summary"], {
+            "items_with_prompt": 4,
+            "pending_items": 2,
+            "estimated_images": 3,
+            "execution_items": 1,
+            "execution_images": 1,
+            "item_limit": 1,
+            "image_limit": 1,
+            "invalid_quantities": 0,
+            "completed_items": 1,
+            "review_items": 1,
+        })
+        self.assertEqual(digest(queue), before)
+
+        book = load_workbook(queue)
+        try:
+            book["Fila_Geracao"]["M2"] = "inválida"
+            book.save(queue)
+        finally:
+            book.close()
+        self.session.choose_queue(queue)
+        summary = self.session.state()["queue_summary"]
+        self.assertEqual(summary["invalid_quantities"], 1)
+        self.assertEqual(summary["estimated_images"], 1)
+        preferences = deepcopy(self.session.preferences)
+        preferences.update(max_jobs=5, max_images=2)
+        self.session.set_preferences(preferences)
+        updated = self.session.state()["queue_summary"]
+        self.assertEqual((updated["execution_items"], updated["execution_images"]), (1, 1))
     def test_direct_ignores_invalid_sheet_references_and_missing_column(self):
         self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('D2', 'UNKNOWN::../../missing.png'))
         self.session.set_mode('direct')
@@ -358,6 +398,35 @@ class StudioTests(IsolatedTest):
         with patch('src.native_picker.tk.Tk'), patch('src.native_picker.filedialog.askdirectory',return_value=str(self.refs)):
             self.assertEqual(select('folder'),[str(self.refs)])
 
+    def test_http_queue_selection_returns_summary_to_fresh_session(self):
+        fresh = StudioSession(self.root / "fresh-settings.json", env={})
+        server = make_server(fresh, picker=lambda kind: [str(self.queue)] if kind == "queue" else [])
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        def request(path, data=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            headers = {"X-Afirma-Token": server.session_token, "Content-Type": "application/json"}
+            connection.request("GET" if data is None else "POST", path,
+                               body=None if data is None else json.dumps(data), headers=headers)
+            response = connection.getresponse()
+            body = response.read()
+            status = response.status
+            connection.close()
+            return status, json.loads(body)
+
+        status, selected = request("/api/select", {"kind": "queue"})
+        self.assertEqual(status, 200)
+        self.assertEqual(selected["paths"], [str(self.queue)])
+        status, state = request("/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["queue"], str(self.queue))
+        self.assertEqual(state["queue_summary"]["pending_items"], 8)
+        self.assertEqual(state["queue_summary"]["execution_items"], 1)
+        self.assertEqual(state["queue_summary"]["execution_images"], 1)
+        self.assertEqual(self.api.call_count, 0)
     def test_session_folder_override_does_not_require_sheet_write(self):
         second=self.root/'new-photos'
         second.mkdir()

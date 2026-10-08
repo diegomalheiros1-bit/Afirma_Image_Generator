@@ -14,7 +14,7 @@ from PIL import Image
 from src.excel_reader import load_config, load_queue
 from src.execution_state import queue_lock, PersistenceError, digest
 from src.image_settings import ImageSettings
-from src.job_values import cell_text
+from src.job_values import cell_text, parse_quantity
 
 
 def validate_photos(paths):
@@ -126,6 +126,7 @@ class StudioSession:
         self.env = env  # Defaults are extracted locally; secrets never enter state/preferences.
         self.credential_file = Path(__file__).resolve().parents[1] / ".env"
         self.queue = None
+        self.queue_summary = None
         self.photos = []
         self.folders = []
         self.default_folder = ""
@@ -205,6 +206,53 @@ class StudioSession:
                     if temporary:
                         temporary.unlink(missing_ok=True)
             self.preferences = values
+            if self.queue:
+                self._refresh_queue_summary()
+
+    def _refresh_queue_summary(self, config=None):
+        if not self.queue:
+            self.queue_summary = None
+            return
+        if config is None:
+            config = load_config(self.queue, reference_mode="direct")
+        frame = load_queue(self.queue, reference_mode=self.mode)
+        prompts = frame.apply(
+            lambda row: bool(cell_text(row.get("Prompt_Padrao")) or
+                             cell_text(row.get("Prompt_Variacao"))), axis=1)
+        pending = frame["Status"].map(lambda value: isinstance(value, str) and value.strip().upper() == "PENDENTE")
+        pending_prompts = prompts & pending
+        image_count = 0
+        invalid_quantities = 0
+        execution_items = 0
+        execution_images = 0
+        item_limit = min(self.preferences["max_jobs"], config["limit"])
+        for _, row in frame.loc[pending_prompts].iterrows():
+            try:
+                quantity = parse_quantity(row.get("Quantidade"))
+                image_count += quantity
+            except ValueError:
+                invalid_quantities += 1
+                continue
+            if execution_items >= item_limit or execution_images + quantity > self.preferences["max_images"]:
+                continue
+            execution_items += 1
+            execution_images += quantity
+        completed = frame["Status"].map(
+            lambda value: isinstance(value, str) and value.strip().upper() in {"CONCLUIDO", "SIMULADO"})
+        review = frame["Status"].map(
+            lambda value: isinstance(value, str) and value.strip().upper() in {"REVISAO", "ERRO"})
+        self.queue_summary = {
+            "items_with_prompt": int(prompts.sum()),
+            "pending_items": int(pending_prompts.sum()),
+            "estimated_images": image_count,
+            "execution_items": execution_items,
+            "execution_images": execution_images,
+            "item_limit": item_limit,
+            "image_limit": self.preferences["max_images"],
+            "invalid_quantities": invalid_quantities,
+            "completed_items": int((prompts & completed).sum()),
+            "review_items": int((prompts & review).sum()),
+        }
 
     def choose_queue(self, path):
         with self.lock:
@@ -220,8 +268,8 @@ class StudioSession:
             self.folders = [{"alias": a, "path": str(p)} for a, p in config["reference_dirs"].items()]
             self.default_folder = next((a for a, p in config["reference_dirs"].items()
                                         if p == config["reference_dir"]), "")
-            # Old single-folder workbooks remain valid without adding a sheet.
             self.legacy_root = config["reference_dir"]
+            self._refresh_queue_summary(config)
             self.items, self.result, self.error = [], {}, ""
 
     def set_mode(self, mode):
@@ -230,7 +278,8 @@ class StudioSession:
             if mode not in {"spreadsheet", "direct"}:
                 raise ValueError("Modo inválido.")
             self.mode = mode
-
+            if self.queue:
+                self._refresh_queue_summary()
     def add_photos(self, paths):
         with self.lock:
             self.idle()
@@ -401,7 +450,7 @@ class StudioSession:
 
     def state(self):
         with self.lock:
-            return dict(queue=str(self.queue) if self.queue else "", mode=self.mode,
+            return dict(queue=str(self.queue) if self.queue else "", queue_summary=deepcopy(self.queue_summary), mode=self.mode,
                         photos=[{"name": p.name, "path": str(p)} for p in self.photos],
                         folders=deepcopy(self.folders), default_folder=self.default_folder,
                         preferences=deepcopy(self.preferences), active=self.active,

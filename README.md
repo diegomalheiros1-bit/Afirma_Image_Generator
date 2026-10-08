@@ -36,6 +36,12 @@ No modo direto, `Arquivo_Referencia` é ignorado e pode estar vazio ou ausente;
 necessária para os demais dados. Não há fallback automático entre os modos.
 Ao voltar ao modo planilha sem configuração legada, escolha uma pasta padrão.
 
+Ao selecionar a planilha, o Studio resume os itens com prompt, os itens pendentes,
+as imagens previstas e o tamanho da próxima execução. O lote respeita os limites
+de jobs e imagens configurados, incluindo `Limite_Por_Execucao`; itens que excedem
+a capacidade ficam pendentes para execuções futuras. Quantidades inválidas são
+indicadas e não entram na estimativa.
+
 O cadastro de pastas usa seletores nativos do Windows. A gravação de
 `Pastas_Referencias` na planilha é uma ação explícita na interface. Fotos e cadastro
 da sessão não são persistidos pelo botão de salvar preferências; consulte o guia
@@ -95,9 +101,10 @@ ou gerar no Studio define o modo efetivo, independentemente de `Dry_Run` do Exce
 
 ## Estado da validação
 
-Revisão de 06/10/2026: **91 testes automatizados passaram** em cópia isolada,
-com clientes falsos e arquivos temporários. Incluem as correções de retomada de
-trabalhos `prepared` e de seleção direta sem `Pasta_Referencias`.
+Revisão de 08/10/2026: **95 testes automatizados passaram** com clientes falsos
+e arquivos temporários. Incluem a leitura do resumo da planilha sem escrita,
+o cálculo dos limites da próxima execução e as correções de retomada de trabalhos
+`prepared` e de seleção direta sem `Pasta_Referencias`.
 O relatório da implementação registra 12/12 itens simulados com pausa e retomada.
 Os seletores nativos possuem testes de contrato; o fluxo de navegador registrado
 usou seleção fictícia pré-carregada. O teste pago permanece pendente de autorização.

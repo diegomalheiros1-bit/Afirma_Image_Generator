@@ -36,6 +36,15 @@ Somente o mesmo caminho resolvido é deduplicado. Todas as linhas usam essa sele
 Prompts, IDs, nomes de saída e demais colunas obrigatórias continuam exigidos.
 São aceitas de 1 a 16 referências, cada uma com menos de 50 MiB e conteúdo válido.
 
+### Resumo ao selecionar a planilha
+
+Depois da seleção, o Studio informa quantos itens têm prompt, quantos estão
+pendentes e quantas imagens estão previstas para os pendentes. Também mostra o
+lote estimado para a próxima execução: ele respeita o menor limite entre
+`MAX_JOBS_PER_RUN` e `Limite_Por_Execucao`, além de `MAX_IMAGES_PER_RUN`.
+Linhas que excedam esses limites permanecem pendentes para execuções futuras.
+Quando `Quantidade` está vazia, considera-se uma imagem; quantidades inválidas
+são sinalizadas e ficam fora da estimativa.
 Planilha, modo, referências, pastas e preferências ficam bloqueados durante a
 execução, inclusive pausada. Encerrar aguarda o item atual; não interrompe uma
 requisição em andamento. Pausar/Retomar funciona entre itens e mantém o mesmo

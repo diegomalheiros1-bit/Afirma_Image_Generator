@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import tempfile
 import re
+from decimal import Decimal, InvalidOperation
 import pandas as pd
 from openpyxl import load_workbook
 from src.execution_state import PersistenceError
@@ -35,10 +36,13 @@ def load_config(path: Path, *, reference_mode="spreadsheet") -> dict:
                 raise ValueError(f"Configuracao ausente: {key}")
         raw_limit = values["Limite_Por_Execucao"]
         try:
-            limit = int(raw_limit)
-        except (ValueError, TypeError, OverflowError) as exc:
+            numeric_limit = Decimal(str(raw_limit).strip())
+            if not numeric_limit.is_finite() or numeric_limit != numeric_limit.to_integral_value():
+                raise ValueError
+            limit = int(numeric_limit)
+        except (InvalidOperation, ValueError, TypeError, OverflowError) as exc:
             raise ValueError("Limite_Por_Execucao deve ser inteiro positivo.") from exc
-        if limit <= 0 or str(raw_limit).strip() != str(limit):
+        if limit <= 0:
             raise ValueError("Limite_Por_Execucao deve ser inteiro positivo.")
         dry_run = str(values.get("Dry_Run", "SIM")).strip().upper()
         if dry_run not in ("SIM", "NAO", "NÃO"):
