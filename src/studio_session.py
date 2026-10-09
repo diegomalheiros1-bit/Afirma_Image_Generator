@@ -13,6 +13,7 @@ import time
 import uuid
 
 from PIL import Image
+from src.app_info import app_info
 from src.credential_store import CredentialStore
 from src.excel_reader import load_config, load_queue
 from src.execution_state import queue_lock, PersistenceError, digest
@@ -126,6 +127,7 @@ class StudioSession:
         self.lock = threading.RLock()
         self.settings_path = Path(settings_path)
         self.allow_api = allow_api
+        self.app_mode = "browser"
         self.env = env  # Defaults are extracted locally; secrets never enter state/preferences.
         self.credential_file = Path(__file__).resolve().parents[1] / ".env"
         self.credential_store = CredentialStore(self.settings_path)
@@ -488,7 +490,7 @@ class StudioSession:
         from main import make_job
         from src.image_generator import OpenAIImageGenerator
         from src.job_values import canonical_id
-        config, _ = self.snapshot()
+        config, prefs = self.snapshot()
         df = load_queue(self.queue, reference_mode=self.mode)
         ids = df["ID"].map(canonical_id)
         if ids.eq("").any() or ids.duplicated().any():
@@ -520,8 +522,19 @@ class StudioSession:
                 errors.append(f"ID {row['ID']}: {exc}")
         if errors:
             raise ValueError("\n".join(errors))
+        item_limit = min(prefs["max_jobs"], config["limit"])
+        selected, images = 0, 0
+        for job in plan:
+            if selected >= item_limit or images + job["quantity"] > prefs["max_images"]:
+                continue
+            selected += 1
+            images += job["quantity"]
         return {"jobs": plan, "settings": asdict(config["image_settings"]),
-                "experimental": config["image_settings"].experimental}
+                "experimental": config["image_settings"].experimental,
+                "execution_preview": dict(items=selected, images=images,
+                    output_dir=str(config["result_dir"]),
+                    safe_mode_compatible=not prefs["safe_mode"] or (
+                        prefs["max_jobs"] <= 1 and prefs["max_images"] <= 1 and config["limit"] <= 1))}
 
     def _event(self, kind, values):
         with self.lock:
@@ -645,5 +658,5 @@ class StudioSession:
                         paused=bool(self.control and self.control.paused), status=self.status,
                         total=self.total, items=deepcopy(self.items), result=dict(self.result), error=self.error,
                         run_log=deepcopy(self.run_log),
-                        allow_api=self.allow_api, api_key_status=self.api_key_status(),
+                        allow_api=self.allow_api, app_mode=self.app_mode, app_info=app_info(), api_key_status=self.api_key_status(),
                         api_connection=deepcopy(self._api_connection))

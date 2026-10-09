@@ -15,7 +15,6 @@ import sys
 import webbrowser
 
 from PIL import Image, ImageOps
-from src.native_picker import select as select_native_file
 from src.studio_session import StudioSession
 
 ROOT = Path(__file__).resolve().parent
@@ -186,7 +185,8 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--native-picker":
-        print(json.dumps(select_native_file(sys.argv[2]), ensure_ascii=True))
+        from src.native_picker import select
+        print(json.dumps(select(sys.argv[2]), ensure_ascii=True))
         raise SystemExit(0)
     default_settings = (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Afirma Image Studio" / "settings.json"
                         if getattr(sys, "frozen", False) else ROOT / ".studio-settings.json")

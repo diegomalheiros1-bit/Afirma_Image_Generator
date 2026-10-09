@@ -2,25 +2,35 @@
 
 Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
-Agora inclui a interface funcional **Afirma Image Studio**: execute `python studio.py`.
+Inclui o **Afirma Image Studio**, com janela própria no Windows: execute
+`python desktop.py` após instalar `requirements-desktop.txt`. A interface no
+navegador continua disponível por `python studio.py`.
 Consulte [o guia do Studio](docs/STUDIO.md) para os dois modos de referências,
-cadastro de pastas, configurações, simulação e retomada. A API real fica bloqueada
-por padrão na interface; habilitação somente após autorização explícita.
-O script depende de um processo ativo: fechar o terminal, desligar o computador
-ou interromper o Python interrompe o lote. Não há serviço em segundo plano.
+cadastro de pastas, configurações, simulação e retomada. No aplicativo Windows,
+a geração paga exige sua chave e confirmação na interface. Na versão de navegador,
+a API real fica bloqueada por padrão. O processamento depende do aplicativo aberto
+e do computador ligado. Não há serviço em segundo plano.
 
 ## Pacote Windows para teste do cliente
 
-Um pacote portátil com `Afirma-Image-Studio.exe` pode ser gerado no Windows com
-`python scripts/build_windows_package.py`. O ZIP, o SHA-256 e a pasta extraída
-ficam em `output/releases/<data-hora>/`; não são enviados ao GitHub. O cliente
-deve extrair o ZIP completo e abrir `Iniciar Afirma Studio.cmd`. O iniciador
-habilita o botão de API real somente no computador local; cada execução paga
-ainda exige confirmação na interface. Abrir o `.exe` diretamente mantém a API
-bloqueada. A chave pode ser informada em **Configurações > Opções avançadas**;
-o pacote não contém `.env`, chaves, planilhas ou imagens do piloto. Veja também
-o `LEIA-ME.txt` incluído no ZIP. É um pacote portátil, ainda sem instalador ou
-assinatura digital.
+O cliente extrai o ZIP completo e abre **`Afirma-Image-Studio.exe`**. A janela
+permite minimizar, maximizar, restaurar e redimensionar, com reorganização dos
+painéis em telas menores. Não abre Chrome ou Edge nem exige Python instalado.
+Usa o componente **Microsoft Edge WebView2 Runtime**, necessário no Windows
+10/11 de 64 bits. A pasta `_internal` deve permanecer junto ao executável.
+
+A chave fica em **Configurações > Opções avançadas**. Cada geração paga exige
+confirmação; `--simulation-only` bloqueia o botão pago. Preferências, chave
+protegida, cache e logs ficam em `%LOCALAPPDATA%\Afirma Image Studio`.
+O pacote não contém `.env`, chaves, planilhas ou imagens reais.
+
+Para gerar o pacote em ambiente Windows, instale `requirements-build-windows.txt`
+e execute `python scripts/build_windows_package.py`. A build valida o executável
+com uma campanha fictícia de três itens, maximização e diferentes tamanhos de
+janela antes de gerar o ZIP. Artefatos, relatório, capturas, SHA-256 e metadados
+ficam em `output/releases/<data-hora>/`; não são enviados ao GitHub.
+Veja [o guia Windows](docs/WINDOWS.md) e o `LEIA-ME.txt` do pacote.
+É um pacote portátil, sem instalador ou assinatura digital.
 
 ## Começar pelo Studio
 
@@ -40,6 +50,16 @@ Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
 4. Abra Configurações, ajuste os parâmetros e limites; os ícones `?` explicam
    cada campo principal. Em Opções avançadas, informe a chave se necessário.
 5. Use **Conferir campanha** e faça uma simulação antes de uma execução real.
+
+Os três botões mostram ajuda ao passar o mouse ou receber foco pelo teclado:
+**Conferir campanha** valida os dados; **Simular campanha** testa o fluxo sem
+chamar a API; **Gerar imagens — API paga** abre uma janela de confirmação.
+Na versão **1.0.1**, essa janela mostra o limite efetivo de itens/imagens,
+planilha, modelo, parâmetros e pasta de saída, além do aviso de consumo de
+créditos ou cobrança na conta OpenAI. A execução só começa em **Confirmar e
+gerar imagens**. Cancelar ou pressionar Esc não inicia a geração. Sem chave,
+o usuário recebe orientação para Configurações. Se a campanha mudar enquanto
+a janela estiver aberta, o resumo é atualizado e exige nova confirmação.
 
 | Modo | Referências utilizadas |
 | --- | --- |
@@ -107,6 +127,12 @@ botões `?` mostram ajuda ao clicar, passar o ponteiro ou usar o teclado.
 
 ## Configurações na interface
 
+As configurações têm os submenus **Geração** e **Sobre**. Em Sobre, consulte a
+apresentação do software, versão e autoria, modelo selecionado, informações de
+custos e envio de referências, além dos links oficiais da OpenAI. A navegação
+entre submenus preserva os campos editados; alterações só são aplicadas pelas
+ações existentes de aplicar ou salvar. Os links externos abrem no navegador.
+
 - Modelos: GPT Image 2.5 Sunburst e Flare.
 - Formato: PNG, JPEG ou WebP; a extensão de `Nome_Saida` é ajustada automaticamente.
 - Fundo: automático, opaco ou transparente; JPEG não aceita transparência.
@@ -152,6 +178,13 @@ proteção de arquivos existentes e retomada sem repetir chamadas. A conferênci
 66 itens da planilha real passou com um destino livre, sem alterar o Excel ou usar a API.
 Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
 timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
+
+Na revisão do aplicativo Windows de 09/10/2026, **129 testes automatizados
+passaram**, incluindo fechamento seguro durante uma campanha, seletores nativos,
+janela redimensionável, encerramento do servidor e logs sem console. A build
+também executa o próprio `.exe` com três itens fictícios, temas claro/escuro,
+maximização, tamanhos menores e capturas do layout. Essa validação é sem chamadas
+pagas e não substitui a conferência no computador do cliente.
 
 Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md),
 [revisão pré-piloto](docs/REVISAO_2026-10-08.md) e
@@ -460,9 +493,9 @@ Outros modelos são rejeitados até validar seus parâmetros. Acesso da conta,
 saldo e qualidade visual devem ser avaliados para cada nova campanha; o piloto
 de três imagens não garante custo ou resultado iguais.
 
-Inclui interface local no navegador e estimativa de custo no histórico quando
-há dados de uso. Oferece empacotamento portátil para Windows; a interface atual
-abre no navegador. Não inclui serviço em segundo plano ou janela nativa Windows.
+Inclui aplicativo Windows, interface local opcional no navegador e estimativa
+de custo no histórico quando há dados de uso. Oferece empacotamento portátil
+com janela nativa redimensionável. Não inclui serviço em segundo plano.
 
 ## Referências em várias pastas
 

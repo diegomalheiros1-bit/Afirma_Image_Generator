@@ -17,8 +17,15 @@ seta de seleção. O histórico mostra horários de Brasília, duração e statu
 por item em uma tabela com rolagem horizontal em telas estreitas.
 
 Interface funcional local sobre o mesmo processamento de `main.py`. Usa o logo,
-paleta roxa, painéis claros e organização do protótipo aprovado. Sem dependências
-web, CDN, upload para terceiros, serviço público ou armazenamento do navegador.
+paleta roxa, painéis claros e organização do protótipo aprovado. Os recursos da
+interface são locais, sem CDN ou serviço web público. Na geração real, prompts e
+referências são enviados à API da OpenAI. O tema usa armazenamento do navegador.
+
+Em **Configurações**, os submenus **Geração** e **Sobre** separam os parâmetros
+da apresentação do aplicativo. Sobre mostra versão e autoria, o modelo
+selecionado em Geração, orientações de uso/custo/chave e links oficiais.
+Os links abrem no navegador externo; a consulta ao submenu é local e não chama
+a API. Mudar de submenu preserva campos editados e não aplica preferências.
 
 ## Instalar e abrir
 
@@ -232,9 +239,11 @@ campanha e use Gerar imagens — API paga. O botão pede
 confirmação da execução concreta. Acesso ao modelo, saldo, latência e qualidade
 visual só podem ser confirmados nesse teste pago.
 
-Inclui empacotamento portátil para Windows, armazenamento protegido de chave e
-estimativa de custo no histórico quando há dados de uso. A interface atual abre
-no navegador. Não inclui janela nativa Windows, serviço Windows, processamento
+Inclui [aplicativo Windows com janela própria](WINDOWS.md), empacotamento portátil,
+armazenamento protegido de chave e estimativa de custo no histórico quando há
+dados de uso. `studio.py` mantém a interface opcional no navegador. No aplicativo
+`desktop.py`/`.exe`, a geração paga está disponível com chave e confirmação;
+`--simulation-only` permite bloqueá-la. Não inclui serviço Windows, processamento
 com computador desligado ou recuperação remota de respostas.
 O Studio não publica arquivos nem faz push. Um diretório inexistente configurado no Excel é rejeitado
 ao carregar; corrija seu caminho antes de usar o modo planilha.
@@ -274,3 +283,25 @@ Se a conexão falhar, confira o IP, a rede e o Firewall. Quando necessária, a
 liberação deve ficar restrita ao programa, porta, IP local e sub-rede usados.
 O aplicativo não altera o Firewall automaticamente. Nesta validação, o usuário
 confirmou a abertura pelo celular sem ser necessário adicionar a regra tentada.
+
+## Ajuda nas ações e confirmação da geração
+
+Os botões Conferir, Simular e Gerar exibem tooltips ao passar o mouse ou
+receber foco pelo teclado. Conferir valida a campanha; Simular executa o
+processamento sem chamadas à API e preserva a planilha.
+
+Gerar imagens abre uma janela com aviso explícito de créditos/cobrança,
+planilha, modelo, formato, qualidade, resolução, pasta de saída e a quantidade
+máxima do lote conforme os limites de itens e imagens. A prévia pode incluir
+itens que a recuperação depois identifica como concluídos: por isso os números
+são apresentados como “Até”. Não se promete preço fixo para a execução.
+
+Cancelar ou Esc fecha a janela sem gerar. Confirmar exige chave disponível,
+campanha válida e limites compatíveis com o modo seguro; autenticação, saldo e
+acesso ao modelo continuam sujeitos à chamada real. Campanha ou preferências
+alteradas exigem revisão do resumo e nova confirmação. Enquanto inicia, os
+controles ficam bloqueados para impedir envios repetidos.
+
+O diagnóstico Windows verifica esse fluxo com interceptação local do início
+pago e backend com API bloqueada: ausência de chave, cancelamento, Esc,
+alteração do lote e clique repetido. Nenhum teste desse fluxo consome créditos.

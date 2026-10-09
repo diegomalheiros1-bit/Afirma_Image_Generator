@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+import sys
 
 
 def get_logger() -> logging.Logger:
@@ -20,10 +21,10 @@ def get_logger() -> logging.Logger:
         )
         file_handler.setFormatter(formatter)
 
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-
         logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+        if sys.stderr is not None:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
 
     return logger

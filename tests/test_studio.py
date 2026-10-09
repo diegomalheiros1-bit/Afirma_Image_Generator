@@ -57,6 +57,34 @@ class StudioTests(IsolatedTest):
     def generator(self, settings=None):
         return OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.api)), settings=settings)
 
+    def test_confirmation_preview_respects_quantities_and_sheet_limits_read_only(self):
+        rows = [[i, 'Prompt', '', 'ok.png', f'{i}.png', 'PENDENTE', 0, '', '', '', '', '', quantity, '']
+                for i, quantity in enumerate((2, 1, 2), 1)]
+        queue, _, output = StageThreeTests().make_queue(self.root / 'confirmation', rows, optional=True)
+        session = StudioSession(self.root / 'preview-settings.json', env={})
+        session.choose_queue(queue)
+        values = deepcopy(session.preferences)
+        values.update(max_jobs=2, max_images=3, safe_mode=False)
+        session.set_preferences(values)
+        before = digest(queue)
+        preview = session.validate_campaign()['execution_preview']
+        self.assertEqual((preview['items'], preview['images']), (2, 3))
+        self.assertEqual(Path(preview['output_dir']), output)
+        values['max_images'] = 1
+        session.set_preferences(values)
+        preview = session.validate_campaign()['execution_preview']
+        self.assertEqual((preview['items'], preview['images']), (1, 1))
+        self.assertEqual(digest(queue), before)
+        self.assertFalse(Path(str(queue) + '.state.json').exists())
+
+    def test_confirmation_preview_flags_incompatible_safe_mode_before_start(self):
+        self.assertFalse(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
+        values = deepcopy(self.session.preferences)
+        values['safe_mode'] = False
+        self.session.set_preferences(values)
+        self.assertTrue(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
+        self.api.assert_not_called()
+
     def test_api_key_session_and_protected_storage_never_enter_state(self):
         if os.name != 'nt':
             self.skipTest('DPAPI is Windows-only')
