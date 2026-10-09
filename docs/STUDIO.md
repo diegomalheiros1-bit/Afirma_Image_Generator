@@ -44,7 +44,7 @@ Não use o HTML sozinho: ele precisa do servidor Python.
 Fotos da seleção direta não participam. Campo vazio, alias desconhecido, arquivo
 ausente e imagem inválida impedem a conferência da campanha antes de qualquer API.
 
-**Selecionar no software — fotos da campanha:** use Adicionar fotos repetidamente
+**Selecionar Arquivo - Fotos da campanha:** use Adicionar fotos repetidamente
 para selecionar PNG, JPG/JPEG e WebP de diferentes pastas. Miniaturas, nome e
 caminho distinguem arquivos com o mesmo nome. Remova fotos individualmente.
 Somente o mesmo caminho resolvido é deduplicado. Todas as linhas usam essa seleção;
@@ -98,6 +98,26 @@ Não é necessário salvar o cadastro para simular ou gerar nesta sessão.
 
 ## Parâmetros de imagem
 
+Em **Configurações > Opções avançadas**, informe sua chave e clique em
+**Usar e verificar** ou **Salvar protegida neste computador**. A conexão é
+conferida automaticamente em segundo plano, com indicador de andamento,
+ícone verde quando confirmada e vermelho quando não conectada. A mensagem
+distingue autenticação recusada, falta de permissão, limites, timeout e falha de
+rede. **Verificar conexão** repete a consulta da chave configurada, inclusive
+quando ela vem do `.env` ou do ambiente. Durante uma campanha, a checagem fica
+indisponível.
+
+A verificação faz somente `GET https://api.openai.com/v1/models`, com timeout de
+10 segundos e sem novas tentativas automáticas. Não envia prompts, referências
+ou planilhas, nem gera imagens. Confirma autenticação nessa consulta; não comprova
+saldo ou autorização para a geração de imagens. Uma chave restrita sem permissão
+para listar modelos pode não passar na checagem. O horário é mostrado na tela;
+o resultado não é salvo nas preferências ou logs e é reiniciado ao trocar/remover
+a chave ou reabrir o Studio. Nenhuma resposta da OpenAI ou chave é exibida no erro.
+
+Referências: [listar modelos](https://developers.openai.com/api/reference/resources/models/methods/list)
+e [códigos de erro](https://developers.openai.com/api/docs/guides/error-codes).
+
 Os dois modelos suportados são `gpt-image-2.5-sunburst` e `gpt-image-2.5-flare`.
 Suportam PNG/JPEG/WebP; fundo `auto`, `opaque`, `transparent`; qualidade `auto`,
 `low`, `medium`, `high`, `xhigh`, `max`. JPEG com transparência é erro explícito.
@@ -116,8 +136,14 @@ A documentação oficial atual define `output_compression` como compressão de
 parâmetro. Ao trocar para PNG, se havia compressão explícita, desmarque-a antes
 de aplicar; uma combinação inválida é bloqueada, não corrigida silenciosamente.
 
-O nome na planilha deve combinar com o formato: `.png`, `.jpg`/`.jpeg`, `.webp`.
-O software não renomeia os nomes da planilha automaticamente. A API recebe o
+O campo **Formato** define a extensão dos arquivos gerados. `Nome_Saida` na planilha
+pode conter apenas o nome: `produto_001` vira `produto_001.png` ao escolher PNG.
+Uma extensão PNG/JPG/JPEG/WebP diferente é substituída pela selecionada; uma
+compatível é preservada, inclusive `.jpg` para JPEG. Nomes com pontos, como
+`1.01.06.2702.1`, são mantidos e recebem a extensão ao final. Sem extensão de imagem,
+JPEG usa `.jpeg`. O valor de `Nome_Saida` na planilha não é alterado.
+**Conferir campanha** mostra os caminhos finais e bloqueia nomes que passam a
+ser duplicados após o ajuste ou saídas existentes sem histórico confirmado. A API recebe o
 formato e o conteúdo retornado é validado com Pillow antes de gravar. Conteúdo
 inesperado é resultado incerto para revisão; não vira uma imagem de outro formato
 com uma extensão falsa. Criação exclusiva impede sobrescrita.
@@ -199,16 +225,18 @@ simulação começa de novo. Retomada de gerações reais depende do registro pe
 
 ## Teste pago e limitações
 
-Nenhuma chamada real foi autorizada para esta implementação. Após revisar testes
-e interface, proponha uma única imagem, com fotos e parâmetros definidos, nome
-de saída novo e limite 1. Só após autorização explícita abra `python studio.py
---enable-api`, confira a campanha e use Gerar imagens — API paga. O botão pede
+O acesso à geração paga permanece bloqueado por padrão. Para uma nova campanha,
+revise fotos, parâmetros, nomes de saída e limites antes de habilitar a geração.
+Só após autorização explícita abra `python studio.py --enable-api`, confira a
+campanha e use Gerar imagens — API paga. O botão pede
 confirmação da execução concreta. Acesso ao modelo, saldo, latência e qualidade
 visual só podem ser confirmados nesse teste pago.
 
-Não inclui executável, serviço Windows, processamento com computador desligado,
-gerenciador de chaves, recuperação remota de respostas ou estimativa financeira.
-Não publica nem faz push. Um diretório inexistente configurado no Excel é rejeitado
+Inclui empacotamento portátil para Windows, armazenamento protegido de chave e
+estimativa de custo no histórico quando há dados de uso. A interface atual abre
+no navegador. Não inclui janela nativa Windows, serviço Windows, processamento
+com computador desligado ou recuperação remota de respostas.
+O Studio não publica arquivos nem faz push. Um diretório inexistente configurado no Excel é rejeitado
 ao carregar; corrija seu caminho antes de usar o modo planilha.
 
 ## Revisão independente

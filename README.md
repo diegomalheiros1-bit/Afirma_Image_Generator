@@ -44,7 +44,7 @@ Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
 | Modo | Referências utilizadas |
 | --- | --- |
 | Pela planilha | Cada item usa exclusivamente `Arquivo_Referencia` da sua linha, com arquivos separados por `;` e aliases opcionais |
-| Selecionar no software | Até 16 fotos adicionadas cumulativamente de pastas diferentes, com miniaturas e remoção individual; a seleção vale para todos os itens |
+| Selecionar Arquivo - Fotos da campanha | Até 16 fotos adicionadas cumulativamente de pastas diferentes, com miniaturas e remoção individual; a seleção vale para todos os itens |
 
 No modo direto, `Arquivo_Referencia` é ignorado e pode estar vazio ou ausente;
 `Pasta_Referencias` também pode estar vazia ou ausente. A planilha continua
@@ -108,7 +108,7 @@ botões `?` mostram ajuda ao clicar, passar o ponteiro ou usar o teclado.
 ## Configurações na interface
 
 - Modelos: GPT Image 2.5 Sunburst e Flare.
-- Formato: PNG, JPEG ou WebP; `Nome_Saida` precisa usar a extensão correspondente.
+- Formato: PNG, JPEG ou WebP; a extensão de `Nome_Saida` é ajustada automaticamente.
 - Fundo: automático, opaco ou transparente; JPEG não aceita transparência.
 - Qualidade: automática, baixa, média, alta, muito alta ou máxima.
 - Resolução: automática, três tamanhos predefinidos ou dimensões personalizadas validadas.
@@ -116,6 +116,12 @@ botões `?` mostram ajuda ao clicar, passar o ponteiro ou usar o teclado.
 - Pasta de saída, timeout, novas tentativas, limites de jobs/imagens e modo seguro.
 - Em **Opções avançadas**, chave da API para esta sessão ou salva protegida no
   usuário atual do Windows; o campo não mostra uma chave armazenada ao reabrir.
+- Ao clicar em **Usar e verificar** ou salvar a chave, o Studio verifica a
+  autenticação em segundo plano. O cartão mostra ícone verde para **Conectada**,
+  vermelho para **Não conectada**, andamento e horário da última verificação.
+  **Verificar conexão** repete a checagem da chave configurada, inclusive do `.env`.
+  A consulta não gera imagens; confirma autenticação, sem garantir saldo ou
+  permissão para gerar imagens. O resultado fica somente na sessão.
 
 Preferências podem ser aplicadas à sessão ou salvas em `.studio-settings.json`,
 sem credenciais. Os padrões vêm do ambiente sobre o `.env`; preferências salvas
@@ -139,6 +145,13 @@ planilha real concluiu **3 imagens em 3 itens**. A retomada registrada durou
 56,217 s e estimou US$ 0,060884 em uso da API; esse número não é a cobrança
 confirmada. Planilha, referências, imagens e log detalhado permanecem somente
 na máquina local, fora do Git. O Studio mostra o histórico da planilha selecionada.
+
+Revisão de 09/10/2026: **117 testes automatizados passaram**, incluindo extensão
+automática conforme o formato, nomes com pontos, conflitos entre nomes ajustados,
+proteção de arquivos existentes e retomada sem repetir chamadas. A conferência dos
+66 itens da planilha real passou com um destino livre, sem alterar o Excel ou usar a API.
+Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
+timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
 
 Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md),
 [revisão pré-piloto](docs/REVISAO_2026-10-08.md) e
@@ -181,9 +194,13 @@ identificada pelo alias. No modo direto, valem os arquivos escolhidos na interfa
 WEBP são aceitos. Antes da chamada real, o conteúdo também é validado como
 imagem; OpenAI aceita até 16 referências, cada uma menor que 50 MB.
 
-`Nome_Saida` deve ser um nome de arquivo, sem subpastas. Na OpenAI, use a extensão
-do formato selecionado: `.png` (padrão antigo), `.jpg`/`.jpeg` ou `.webp`.
-Para quantidade 1, `imagem_001.png` é preservado; para 3, as saídas são
+`Nome_Saida` deve ser um nome de arquivo, sem subpastas. No Studio e na OpenAI,
+informe apenas o nome, como `imagem_001`: o **Formato** escolhido completa
+automaticamente `.png`, `.jpeg` ou `.webp`. Se já houver uma extensão de imagem
+PNG/JPG/JPEG/WebP diferente, ela é substituída pela escolhida. Extensões compatíveis
+são preservadas (inclusive `.jpg` para JPEG), assim como pontos em códigos de produto.
+O valor original na planilha permanece intacto. Para quantidade 1 e formato PNG,
+a saída é `imagem_001.png`; para 3, as saídas são
 `imagem_001_01.png`, `imagem_001_02.png` e `imagem_001_03.png`.
 Arquivos existentes nunca são sobrescritos. Os arquivos reais ficam em
 `Pasta_Resultados`, inclusive com o provider OpenAI.
@@ -444,7 +461,8 @@ saldo e qualidade visual devem ser avaliados para cada nova campanha; o piloto
 de três imagens não garante custo ou resultado iguais.
 
 Inclui interface local no navegador e estimativa de custo no histórico quando
-há dados de uso. Ainda não inclui executável nem serviço em segundo plano.
+há dados de uso. Oferece empacotamento portátil para Windows; a interface atual
+abre no navegador. Não inclui serviço em segundo plano ou janela nativa Windows.
 
 ## Referências em várias pastas
 

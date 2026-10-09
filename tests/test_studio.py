@@ -267,6 +267,57 @@ class StudioTests(IsolatedTest):
                     generator.generate(job)
                 self.assertEqual(self.api.call_count, before)
 
+    def test_names_without_matching_extension_preflight_generate_and_recover(self):
+        for fmt in ('png', 'jpeg', 'webp'):
+            with self.subTest(fmt=fmt):
+                names = ('produto', '1.01.06.2702.1', 'outro.webp' if fmt != 'webp' else 'outro.jpg')
+                rows = [[i, 'Fotografia', '', 'ok.png', name, 'PENDENTE', 0, '']
+                        for i, name in enumerate(names, 1)]
+                queue, _, _ = StageThreeTests().make_queue(self.root / fmt, rows)
+                session = StudioSession(self.root / f'{fmt}-settings.json', env={})
+                session.choose_queue(queue)
+                settings = ImageSettings(output_format=fmt)
+                values = deepcopy(session.preferences)
+                values.update(image=asdict(settings), max_jobs=3, max_images=3, safe_mode=False)
+                session.set_preferences(values)
+                before = digest(queue)
+                plan = session.validate_campaign()
+                self.assertEqual([Path(job['outputs'][0]).name for job in plan['jobs']],
+                                 [f'produto.{fmt}', f'1.01.06.2702.1.{fmt}', f'outro.{fmt}'])
+                self.assertEqual(digest(queue), before)
+                config, _ = session.snapshot()
+                result = main(queue, generator=self.generator(settings), env=self.env, overrides=config)
+                self.assertEqual((result['success'], result['errors']), (3, 0))
+                self.assertEqual(load_queue(queue)['Nome_Saida'].tolist(), list(names))
+                outputs = [Path(job['outputs'][0]) for job in plan['jobs']]
+                hashes = verified_outputs(outputs, fmt)
+                # A recovered job must use the same normalized paths and make no new call.
+                book = load_workbook(queue)
+                book['Fila_Geracao']['F2'] = 'PROCESSANDO'
+                book.save(queue)
+                book.close()
+                calls = self.api.call_count
+                main(queue, generator=self.generator(settings), env=self.env, overrides=config)
+                self.assertTrue(load_queue(queue)['Status'].eq('CONCLUIDO').all())
+                self.assertEqual(self.api.call_count, calls)
+                self.assertEqual(verified_outputs(outputs, fmt), hashes)
+
+    def test_preflight_detects_duplicates_and_existing_normalized_output(self):
+        self.edit_queue(lambda b: (b['Fila_Geracao'].__setitem__('E2', 'produto'),
+                                   b['Fila_Geracao'].__setitem__('E3', 'produto.jpg')))
+        before = digest(self.queue)
+        with self.assertRaisesRegex(ValueError, 'repetido'):
+            self.session.validate_campaign()
+        self.assertEqual(digest(self.queue), before)
+        self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('E3', 'outro'))
+        self.output.mkdir(parents=True, exist_ok=True)
+        target = self.output / 'produto.png'
+        target.write_bytes(png_bytes())
+        with self.assertRaisesRegex(ValueError, 'já existe'):
+            self.session.validate_campaign()
+        self.assertEqual(target.read_bytes(), png_bytes())
+        self.assertEqual(self.api.call_count, 0)
+
     def test_output_wrong_content_is_uncertain_and_not_saved(self):
         settings = ImageSettings(output_format='jpeg')
         self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('E2', 'mismatch.jpg'))
@@ -389,7 +440,9 @@ class StudioTests(IsolatedTest):
         dummy_key = 'sk-test-placeholder-only-1234567890'
         self.assertEqual(request('/api/credential', {'key': dummy_key}, origin='https://untrusted.test',
                                  token=server.session_token)[0], 403)
-        status, body = request('/api/credential', {'key': dummy_key}, token=server.session_token)
+        with patch('src.api_connection.check_api_connection', return_value=dict(status='connected', message='OK')):
+            status, body = request('/api/credential', {'key': dummy_key}, token=server.session_token)
+            self.session.connection_worker.join(3)
         self.assertEqual(status, 200)
         self.assertNotIn(dummy_key.encode(), body)
         status, body = request('/api/state', token=server.session_token)

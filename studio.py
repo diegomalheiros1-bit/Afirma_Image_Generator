@@ -151,6 +151,11 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                         if lan:
                             raise PermissionError("Configure a chave somente no computador local.")
                         session.set_api_key(data["key"], persist=data.get("persist", False))
+                        result = session.verify_api_key()
+                    elif self.path == "/api/credential/check":
+                        if lan:
+                            raise PermissionError("Verifique a chave somente no computador local.")
+                        result = session.verify_api_key()
                     elif self.path == "/api/credential/clear":
                         if lan:
                             raise PermissionError("Remova a chave somente no computador local.")

@@ -63,10 +63,18 @@ def output_paths(result_dir: Path, filename: str, quantity: int) -> tuple[Path, 
 
 
 def openai_output_paths(result_dir: Path, filename: str, quantity: int, *, check_exists=True, output_format="png") -> tuple[Path, ...]:
-    base = Path(filename)
     extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
+    # Validate the supplied name before adjusting it; normalization must not hide
+    # invalid paths or Windows reserved names. Check only the effective targets.
+    validate_output_path(result_dir, filename, check_exists=False)
+    base = Path(filename)
     if base.suffix.lower() not in extensions[output_format]:
-        raise ValueError(f"Nome_Saida deve usar a extensão do formato {output_format.upper()} escolhido.")
+        image_extensions = set().union(*extensions.values())
+        # Dots can belong to product codes (e.g. 1.01.06.2702.1), so replace
+        # only recognized image extensions and otherwise preserve the full name.
+        stem = base.stem if base.suffix.lower() in image_extensions else filename
+        filename = f"{stem}.{output_format}"
+        base = Path(filename)
     validate_output_path(result_dir, filename, check_exists=check_exists)
     names = ([filename] if quantity == 1 else
              [f"{base.stem}_{number:02d}{base.suffix}" for number in range(1, quantity + 1)])

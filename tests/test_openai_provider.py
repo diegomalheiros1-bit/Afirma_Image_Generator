@@ -35,6 +35,46 @@ class FakeImages:
 
 
 class OpenAITests(IsolatedTest):
+    def test_selected_format_adjusts_extension_preserving_product_codes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for fmt in ('png', 'jpeg', 'webp'):
+                for name in ('produto', '1.01.06.2702.1', 'campanha.v2'):
+                    with self.subTest(format=fmt, name=name):
+                        self.assertEqual(openai_output_paths(root, name, 1, output_format=fmt),
+                                         (root / f'{name}.{fmt}',))
+                        self.assertEqual(openai_output_paths(root, name, 3, output_format=fmt),
+                                         tuple(root / f'{name}_{i:02d}.{fmt}' for i in range(1, 4)))
+                for suffix in ('.png', '.jpg', '.jpeg', '.webp', '.PNG', '.JPEG'):
+                    with self.subTest(format=fmt, suffix=suffix):
+                        expected = suffix if suffix.lower() in {
+                            'png': {'.png'}, 'jpeg': {'.jpg', '.jpeg'}, 'webp': {'.webp'}
+                        }[fmt] else f'.{fmt}'
+                        self.assertEqual(openai_output_paths(root, f'produto{suffix}', 1,
+                                                             output_format=fmt),
+                                         (root / f'produto{expected}',))
+
+    def test_extension_adjustment_rejects_invalid_names_and_existing_targets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ('', '.', '..', '../escape.jpg', 'sub/file', 'CON', 'NUL.jpg',
+                         'bad?.jpg', 'trailing.', 'trailing '):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    openai_output_paths(root, name, 1)
+            (root / 'produto.jpg').write_bytes(b'keep original')
+            self.assertEqual(openai_output_paths(root, 'produto.jpg', 1), (root / 'produto.png',))
+            (root / 'produto.png').write_bytes(b'keep target')
+            with self.assertRaises(FileExistsError):
+                openai_output_paths(root, 'produto', 1)
+            self.assertEqual(openai_output_paths(root, 'produto.jpg', 1, check_exists=False),
+                             (root / 'produto.png',))
+            (root / 'outro_02.webp').write_bytes(b'keep numbered')
+            with self.assertRaises(FileExistsError):
+                openai_output_paths(root, 'outro.jpeg', 3, output_format='webp')
+            self.assertEqual((root / 'produto.jpg').read_bytes(), b'keep original')
+            self.assertEqual((root / 'produto.png').read_bytes(), b'keep target')
+            self.assertEqual((root / 'outro_02.webp').read_bytes(), b'keep numbered')
+
     def test_first_real_run_preflight_blocks_unsafe_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

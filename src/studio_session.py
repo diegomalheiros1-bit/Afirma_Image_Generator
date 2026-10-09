@@ -130,6 +130,9 @@ class StudioSession:
         self.credential_file = Path(__file__).resolve().parents[1] / ".env"
         self.credential_store = CredentialStore(self.settings_path)
         self._session_api_key = None
+        self._credential_revision = 0
+        self.connection_worker = None
+        self._api_connection = dict(status="unverified", message="Verifique a conexão para confirmar sua chave.", checked_at=None)
         self.queue = None
         self.queue_summary = None
         self.photos = []
@@ -218,15 +221,57 @@ class StudioSession:
                 self._session_api_key = None
             else:
                 self._session_api_key = key
+            self._reset_api_connection()
 
     def clear_api_key(self):
         with self.lock:
             self.idle()
             self.credential_store.clear()
             self._session_api_key = None
+            self._reset_api_connection()
 
     def resolve_api_key(self, external=None):
         return self._session_api_key or self.credential_store.read() or external
+
+    def _reset_api_connection(self):
+        self._credential_revision += 1
+        self._api_connection = dict(status="unverified", message="Verifique a conexão para confirmar sua chave.", checked_at=None)
+
+    def verify_api_key(self):
+        """Start one bounded probe without blocking UI polling or generating images."""
+        with self.lock:
+            self.idle()
+            if self._api_connection["status"] == "checking":
+                return deepcopy(self._api_connection)
+            try:
+                if self.env is None:
+                    from dotenv import dotenv_values
+                    external = {**dotenv_values(self.credential_file), **os.environ}
+                else:
+                    external = self.env
+                self._external_api_key_available = bool(external.get("OPENAI_API_KEY"))
+                key = self.resolve_api_key(external.get("OPENAI_API_KEY"))
+            except OSError:
+                self._api_connection = dict(status="disconnected", message="Não foi possível ler a chave protegida. Informe sua chave novamente.", checked_at=None)
+                return deepcopy(self._api_connection)
+            if not key:
+                self._api_connection = dict(status="disconnected", message="Informe uma chave para conectar sua conta.", checked_at=None)
+                return deepcopy(self._api_connection)
+            revision = self._credential_revision
+            self._api_connection = dict(status="checking", message="Confirmando a autenticação com a OpenAI…", checked_at=None)
+
+            def work():
+                from src.api_connection import check_api_connection
+                result = check_api_connection(key)
+                with self.lock:
+                    # A late response for a replaced/removed key must never turn
+                    # the new credential green or overwrite its current check.
+                    if revision == self._credential_revision:
+                        self._api_connection = {**result, "checked_at": self._stamp()}
+
+            self.connection_worker = threading.Thread(target=work, name="afirma-key-check", daemon=True)
+            self.connection_worker.start()
+            return deepcopy(self._api_connection)
 
     @staticmethod
     def checked_preferences(values):
@@ -600,4 +645,5 @@ class StudioSession:
                         paused=bool(self.control and self.control.paused), status=self.status,
                         total=self.total, items=deepcopy(self.items), result=dict(self.result), error=self.error,
                         run_log=deepcopy(self.run_log),
-                        allow_api=self.allow_api, api_key_status=self.api_key_status())
+                        allow_api=self.allow_api, api_key_status=self.api_key_status(),
+                        api_connection=deepcopy(self._api_connection))

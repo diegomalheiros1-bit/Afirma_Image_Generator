@@ -4,6 +4,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-desktop/
 venv/
 output/imagens/*
 !output/imagens/.gitkeep
