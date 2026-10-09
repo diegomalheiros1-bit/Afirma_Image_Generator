@@ -9,6 +9,19 @@ por padrão na interface; habilitação somente após autorização explícita.
 O script depende de um processo ativo: fechar o terminal, desligar o computador
 ou interromper o Python interrompe o lote. Não há serviço em segundo plano.
 
+## Pacote Windows para teste do cliente
+
+Um pacote portátil com `Afirma-Image-Studio.exe` pode ser gerado no Windows com
+`python scripts/build_windows_package.py`. O ZIP, o SHA-256 e a pasta extraída
+ficam em `output/releases/<data-hora>/`; não são enviados ao GitHub. O cliente
+deve extrair o ZIP completo e abrir `Iniciar Afirma Studio.cmd`. O iniciador
+habilita o botão de API real somente no computador local; cada execução paga
+ainda exige confirmação na interface. Abrir o `.exe` diretamente mantém a API
+bloqueada. A chave pode ser informada em **Configurações > Opções avançadas**;
+o pacote não contém `.env`, chaves, planilhas ou imagens do piloto. Veja também
+o `LEIA-ME.txt` incluído no ZIP. É um pacote portátil, ainda sem instalador ou
+assinatura digital.
+
 ## Começar pelo Studio
 
 Com as dependências instaladas, execute na pasta do projeto:

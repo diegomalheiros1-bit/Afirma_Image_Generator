@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import time
@@ -21,7 +22,7 @@ from src.execution_state import Journal, verified_outputs, digest
 from src.image_generator import OpenAIImageGenerator, GenerationError
 from src.image_settings import ImageSettings
 from src.studio_session import StudioSession, validate_folders, validate_photos
-from studio import make_server
+from studio import make_server, native_select
 from support import IsolatedTest, png_bytes
 from test_stage_three import StageThreeTests
 
@@ -33,6 +34,13 @@ def image_bytes(fmt):
 
 
 class StudioTests(IsolatedTest):
+    def test_frozen_native_picker_uses_the_executable(self):
+        with patch('studio.sys.frozen', True, create=True), patch('studio.subprocess.run') as run:
+            run.return_value.stdout = '["C:\\\\Fotos\\\\produto.png"]'
+            self.assertEqual(native_select('photos'), ['C:\\Fotos\\produto.png'])
+            self.assertEqual(run.call_args.args[0], [sys.executable,
+                                                      '--native-picker', 'photos'])
+
     def setUp(self):
         super().setUp()
         self.temp = tempfile.TemporaryDirectory()
