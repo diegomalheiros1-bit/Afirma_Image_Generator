@@ -1,5 +1,7 @@
 # Afirma Image Generator
 
+**Versão atual: 1.0.7 — Afirma Image Studio para Windows.**
+
 Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
 Inclui o **Afirma Image Studio**, com janela própria no Windows: execute
@@ -26,8 +28,8 @@ O pacote não contém `.env`, chaves, planilhas ou imagens reais.
 
 Para gerar o pacote em ambiente Windows, instale `requirements-build-windows.txt`
 e execute `python scripts/build_windows_package.py`. A build valida o executável
-com uma campanha fictícia de três itens, maximização e diferentes tamanhos de
-janela antes de gerar o ZIP. Artefatos, relatório, capturas, SHA-256 e metadados
+com dez itens fictícios, cenários de revisão/retomada, maximização e diferentes
+tamanhos de janela antes de gerar o ZIP. Artefatos, relatório, capturas, SHA-256 e metadados
 ficam em `output/releases/<data-hora>/`; não são enviados ao GitHub.
 Veja [o guia Windows](docs/WINDOWS.md) e o `LEIA-ME.txt` do pacote.
 É um pacote portátil, sem instalador ou assinatura digital.
@@ -49,17 +51,77 @@ Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
 3. Confira as pastas de referências, a pasta de saída e o resumo da fila.
 4. Abra Configurações, ajuste os parâmetros e limites; os ícones `?` explicam
    cada campo principal. Em Opções avançadas, informe a chave se necessário.
-5. Use **Conferir campanha** e faça uma simulação antes de uma execução real.
+5. Em **O que deseja executar?**, escolha a ação e clique em **Conferir seleção**
+   para visualizar os IDs incluídos e os motivos de exclusão.
+6. Use **Conferir campanha** e **Simular campanha** para validar o fluxo local.
+7. Para produzir imagens, use **Gerar imagens — API paga**, confira os IDs do
+   modal e confirme. Essa etapa usa sua conta OpenAI e pode gerar cobrança.
 
 Os três botões mostram ajuda ao passar o mouse ou receber foco pelo teclado:
 **Conferir campanha** valida os dados; **Simular campanha** testa o fluxo sem
 chamar a API; **Gerar imagens — API paga** abre uma janela de confirmação.
-Na versão **1.0.1**, essa janela mostra o limite efetivo de itens/imagens,
+Desde a versão **1.0.1**, essa janela mostra o limite efetivo de itens/imagens,
 planilha, modelo, parâmetros e pasta de saída, além do aviso de consumo de
 créditos ou cobrança na conta OpenAI. A execução só começa em **Confirmar e
 gerar imagens**. Cancelar ou pressionar Esc não inicia a geração. Sem chave,
 o usuário recebe orientação para Configurações. Se a campanha mudar enquanto
 a janela estiver aberta, o resumo é atualizado e exige nova confirmação.
+
+Na versão **1.0.2**, os limites de Configurações prevalecem sobre o limite do
+Excel no Studio. Por exemplo, dez itens/dez imagens selecionam até dez imagens
+mesmo com `Limite_Por_Execucao=1`, sem editar a planilha. A execução por CLI
+continua respeitando o limite do Excel.
+
+### Escolher a execução
+
+| Ação | Itens incluídos |
+| --- | --- |
+| **Gerar pendentes** | Pendentes comuns, sem chamada incerta ou liberação de revisão |
+| **Repetir erros** | Erros confirmados aptos a nova tentativa, após validação da causa |
+| **Repetir itens em revisão** | Somente revisões liberadas explicitamente, com provas revalidadas |
+
+Os limites de itens e imagens são aplicados à seleção efetiva. Itens concluídos
+e suas saídas são preservados. Uma seleção vazia não inicia chamadas.
+
+Em **Itens em revisão**, use **Conferir evidências** e **Liberar nova tentativa**
+para cada item desejado. A confirmação avisa que reenviar uma chamada incerta
+pode gerar outra cobrança. O item continua visível como liberado, e a ação de
+revisão é selecionada automaticamente. A liberação não gera imagens e não inclui
+pendentes comuns ou outros erros. Ela é reconhecida mesmo que a planilha ainda
+mostre `REVISAO`, desde que linha, configurações, referências e saídas correspondam
+às provas registradas. Não é necessário editar o status manualmente.
+
+Para concluir uma execução anterior, escolha-a em **Histórico de execuções** e
+clique em **Retomar lote**. O painel mostra o lote de origem e permite **Escolher
+outra ação**. A retomada usa somente os IDs do lote original, cria uma execução
+ligada à anterior e não acrescenta itens externos. Um lote com seis concluídos,
+uma revisão sem liberação e três não iniciados oferece apenas esses três.
+Históricos antigos sem seleção registrada exigem IDs explícitos.
+
+O histórico desta planilha permanece em `<planilha>.studio-runs/`, com o último
+registro em `<planilha>.studio-run.json`. Mostra contagens, eventos, saídas,
+diagnóstico seguro e parâmetros. Durações aparecem em segundos, minutos e horas;
+valores desconhecidos aparecem como `—`. Credenciais não entram nos registros.
+
+Os botões de campanha, seleção, revisão, retomada, controle e confirmação mostram
+tooltips por mouse e teclado. O modal pago informa os IDs e explica o motivo real
+de um bloqueio, sem atribuir toda seleção vazia aos limites.
+Consulte [execução, retomada e histórico](docs/EXECUCAO_RETOMADA_HISTORICO.md).
+
+### Interrupção e timeout
+
+Timeout, conexão e rejeições confirmadas têm diagnósticos distintos. Uma falha
+de processamento remoto incerto mantém o item em `REVISAO` e interrompe o lote
+na primeira ocorrência, sem repetir a chamada nem iniciar o próximo item.
+O painel e o histórico distinguem planejados, iniciados, concluídos, erros,
+revisão e não iniciados. Detalhes em [diagnóstico e timeout](docs/TIMEOUT_E_INTERRUPCAO.md).
+
+Qualidade `max` com timeout de até 120 segundos exibe uma orientação informativa
+para considerar 600 segundos como margem inicial de teste. É uma sugestão do
+Studio, não uma exigência da OpenAI nem uma garantia de conclusão. Preferências
+salvas não são alteradas automaticamente. Interromper impede os próximos itens;
+a chamada atual pode continuar até retornar ou atingir o timeout. O encerramento
+local não confirma cancelamento remoto.
 
 | Modo | Referências utilizadas |
 | --- | --- |
@@ -73,11 +135,12 @@ Ao voltar ao modo planilha sem configuração legada, escolha uma pasta padrão.
 
 Ao selecionar a planilha, o Studio resume itens com prompt, itens e imagens
 pendentes, imagens concluídas e o tamanho da próxima execução. O painel de
-progresso conta somente a sessão ativa; **Última execução desta planilha** exibe
-o histórico anterior, com horários, duração, estado por item, detalhes da
+progresso acompanha a sessão ativa; **Histórico de execuções** permite escolher
+registros anteriores, com horários, duração, estado por item, detalhes da
 chamada e custo estimado quando houver dados de uso. A estimativa não confirma
-o valor faturado pela API. O lote respeita os limites
-de jobs e imagens configurados, incluindo `Limite_Por_Execucao`; itens que excedem
+o valor faturado pela API. No Studio, o lote respeita os limites de itens e
+imagens definidos em Configurações, que prevalecem sobre `Limite_Por_Execucao`
+do Excel sem alterar a planilha; itens que excedem
 a capacidade ficam pendentes para execuções futuras. Quantidades inválidas são
 indicadas e não entram na estimativa.
 
@@ -179,12 +242,24 @@ proteção de arquivos existentes e retomada sem repetir chamadas. A conferênci
 Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
 timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
 
-Na revisão do aplicativo Windows de 09/10/2026, **129 testes automatizados
-passaram**, incluindo fechamento seguro durante uma campanha, seletores nativos,
-janela redimensionável, encerramento do servidor e logs sem console. A build
-também executa o próprio `.exe` com três itens fictícios, temas claro/escuro,
-maximização, tamanhos menores e capturas do layout. Essa validação é sem chamadas
-pagas e não substitui a conferência no computador do cliente.
+Validação da **versão 1.0.7 em 13/10/2026**: **161 testes automatizados passaram**,
+com conexões externas bloqueadas, fixtures temporárias e clientes simulados.
+O executável empacotado e uma extração nova do ZIP passaram em **40 verificações
+de interface**, incluindo três ações sem sobreposição, retomada pelo histórico,
+tooltips por teclado, revisão liberada ainda marcada `REVISAO`, temas, zoom e
+redimensionamento. A extração foi testada sem Python no PATH e sem credenciais
+herdadas. O SHA-256 do ZIP e os hashes do código foram conferidos.
+
+Essa validação não leu ou verificou chaves reais, não consumiu créditos nem
+alterou a campanha do usuário. Qualidade, custo e latência do serviço real
+dependem de uma nova validação explicitamente autorizada. O pacote é local;
+o repositório contém o código e o script de build, sem binários ou dados privados.
+
+A revisão de timeout também usa exceções reais do SDK com clientes simulados:
+interrupção na primeira falha incerta, retenção de `REVISAO`, retries já
+permitidos, fechamento aguardando a chamada atual e leitura de históricos antigos.
+Não comprova a causa dos tempos observados na execução real nem a adequação de
+600 segundos ao serviço; essas conclusões dependem de um novo teste autorizado.
 
 Guias: [uso do Studio](docs/STUDIO.md), [relatório de entrega](docs/ENTREGA_STUDIO.md),
 [revisão pré-piloto](docs/REVISAO_2026-10-08.md) e
@@ -466,12 +541,12 @@ texto; `src/file_manager.py` valida os caminhos. `src/image_generator.py`
 define a interface, o mock e o provider OpenAI.
 
 ```powershell
-python -m unittest discover -s tests -v
+python scripts/run_local_tests.py
 ```
 
 Testes usam pastas temporárias, clientes falsos e espera simulada; não leem o
-`.env` real nem consomem créditos. A suíte bloqueia a criação do cliente de rede.
-Cobre limites, simulação seguida de geração, interrupção, Excel bloqueado,
+`.env` real nem consomem créditos. O comando acima também bloqueia conexões externas e grava os logs em uma
+pasta nova de `output/local-tests/`, preservando os logs da instalação. Cobre limites, simulação seguida de geração, interrupção, Excel bloqueado,
 concorrência entre processos, prompt, retries e recuperação sem reenvio.
 
 Para validar esta revisão no Windows, abra PowerShell na pasta do projeto,

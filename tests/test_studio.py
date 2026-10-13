@@ -57,7 +57,7 @@ class StudioTests(IsolatedTest):
     def generator(self, settings=None):
         return OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.api)), settings=settings)
 
-    def test_confirmation_preview_respects_quantities_and_sheet_limits_read_only(self):
+    def test_confirmation_preview_respects_quantities_and_image_limits_read_only(self):
         rows = [[i, 'Prompt', '', 'ok.png', f'{i}.png', 'PENDENTE', 0, '', '', '', '', '', quantity, '']
                 for i, quantity in enumerate((2, 1, 2), 1)]
         queue, _, output = StageThreeTests().make_queue(self.root / 'confirmation', rows, optional=True)
@@ -78,12 +78,47 @@ class StudioTests(IsolatedTest):
         self.assertFalse(Path(str(queue) + '.state.json').exists())
 
     def test_confirmation_preview_flags_incompatible_safe_mode_before_start(self):
-        self.assertFalse(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
+        self.assertTrue(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
         values = deepcopy(self.session.preferences)
+        values['max_jobs'] = 2
+        self.session.set_preferences(values)
+        self.assertFalse(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
         values['safe_mode'] = False
         self.session.set_preferences(values)
         self.assertTrue(self.session.validate_campaign()['execution_preview']['safe_mode_compatible'])
         self.api.assert_not_called()
+
+    def test_studio_ten_item_limit_overrides_sheet_one_without_writing_workbook(self):
+        rows = [[i, 'Prompt', '', 'ok.png', f'{i}.png', 'PENDENTE', 0, '']
+                for i in range(1, 13)]
+        queue, _, _ = StageThreeTests().make_queue(self.root / 'ten-items', rows)
+        book = load_workbook(queue)
+        book['Configuracao']['B4'] = 1
+        book.save(queue)
+        book.close()
+        before = digest(queue)
+        session = StudioSession(self.root / 'ten-settings.json', env={})
+        session.choose_queue(queue)
+        values = deepcopy(session.preferences)
+        values.update(max_jobs=10, max_images=10, safe_mode=False)
+        session.set_preferences(values)
+        self.assertEqual(load_config(queue)['limit'], 1)
+        self.assertEqual(session.snapshot()[0]['limit'], 10)
+        summary = session.state()['queue_summary']
+        self.assertEqual((summary['execution_items'], summary['execution_images']), (10, 10))
+        preview = session.validate_campaign()['execution_preview']
+        self.assertEqual((preview['items'], preview['images']), (10, 10))
+        session.start()
+        session.worker.join(10)
+        self.assertFalse(session.active)
+        self.assertEqual(session.result['success'], 10)
+        self.assertEqual(session.result['ignored'], 2)
+        self.assertEqual(digest(queue), before)
+        self.assertFalse(Path(str(queue) + '.state.json').exists())
+        self.api.assert_not_called()
+        # The CLI still obeys the workbook when no Studio snapshot is provided.
+        result = main(queue, env={**self.env, 'DRY_RUN': 'SIM'})
+        self.assertEqual(result['success'], 1)
 
     def test_api_key_session_and_protected_storage_never_enter_state(self):
         if os.name != 'nt':
@@ -166,6 +201,7 @@ class StudioTests(IsolatedTest):
         updated = self.session.state()["queue_summary"]
         self.assertEqual((updated["execution_items"], updated["execution_images"]), (1, 1))
     def test_direct_ignores_invalid_sheet_references_and_missing_column(self):
+        self.session.set_preferences({**self.session.preferences, 'max_jobs': 8, 'max_images': 8})
         self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('D2', 'UNKNOWN::../../missing.png'))
         self.session.set_mode('direct')
         self.session.add_photos([self.refs / 'ok.png'])
@@ -564,6 +600,7 @@ class StudioTests(IsolatedTest):
         self.assertEqual(state["queue_summary"]["execution_images"], 1)
         self.assertEqual(self.api.call_count, 0)
     def test_session_folder_override_does_not_require_sheet_write(self):
+        self.session.set_preferences({**self.session.preferences, 'max_jobs': 8, 'max_images': 8})
         second=self.root/'new-photos'
         second.mkdir()
         (second/'ok.png').write_bytes(png_bytes())

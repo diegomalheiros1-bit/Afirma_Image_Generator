@@ -13,12 +13,14 @@ import time
 from PIL import Image
 from src.generation_job import GenerationJob
 from src.image_settings import ImageSettings, FORMATS
+from src.generation_errors import classify_exception, error_message, safe_request_id, sanitize_diagnostic
 
 
 class GenerationError(RuntimeError):
-    def __init__(self, message, *, uncertain=False):
+    def __init__(self, message, *, uncertain=False, diagnostic=None):
         super().__init__(message)
         self.uncertain = uncertain
+        self.diagnostic = sanitize_diagnostic(diagnostic) if diagnostic else None
 
 
 class OutputStorageError(GenerationError):
@@ -63,6 +65,8 @@ class OpenAIImageGenerator(ImageGenerator):
         self.client = client
         self.model, self.quality = self.settings.model, self.settings.quality
         self.retries, self.sleep = retries, sleep
+        self.timeout = timeout
+        self.should_stop = lambda: False
         self.api_attempts = 0
         self.before_attempt = lambda number: None
 
@@ -105,9 +109,11 @@ class OpenAIImageGenerator(ImageGenerator):
         return max(2 ** attempt, seconds) + random.uniform(0, 0.25)
 
     def generate(self, job):
+        started = time.monotonic()
         self.api_attempts = 0
         self.last_usage = None
         self.last_request_id = None
+        self.last_error = None
         self.validate(job)
         extensions = {"png": {".png"}, "jpeg": {".jpg", ".jpeg"}, "webp": {".webp"}}
         for path in job.saidas:
@@ -127,6 +133,8 @@ class OpenAIImageGenerator(ImageGenerator):
                 image.verify()
             payloads.append(payload)
         for attempt in range(self.retries + 1):
+            if attempt and self.should_stop():
+                raise self.last_error from None
             with ExitStack() as stack:
                 images = []
                 for path, payload in zip(job.referencias, payloads):
@@ -144,31 +152,25 @@ class OpenAIImageGenerator(ImageGenerator):
                         image_input = getattr(getattr(usage, "input_tokens_details", None), "image_tokens", None)
                         text_input = getattr(getattr(usage, "input_tokens_details", None), "text_tokens", None)
                         image_output = getattr(getattr(usage, "output_tokens_details", None), "image_tokens", None)
-                        self.last_usage = {"image_input": image_input, "text_input": text_input,
-                                           "image_output": image_output}
-                    self.last_request_id = getattr(response, "_request_id", None)
+                        self.last_usage = {key: value if type(value) is int and value >= 0 else None
+                                           for key, value in {"image_input": image_input, "text_input": text_input,
+                                                              "image_output": image_output}.items()}
+                    self.last_request_id = safe_request_id(getattr(response, "_request_id", None))
                     break
                 except Exception as exc:
-                    status = getattr(exc, "status_code", None)
-                    code = getattr(exc, "code", None)
+                    diagnostic = classify_exception(exc, timeout=self.timeout, attempts=self.api_attempts,
+                                                    elapsed=time.monotonic() - started)
+                    status, code = diagnostic.get('http_status'), diagnostic.get('api_code')
                     transient = ((status == 429 and code in {"rate_limit_exceeded", "slow_down"}) or
                                  (status == 503 and code == "server_is_overloaded"))
-                    if transient and attempt < self.retries:
+                    self.last_error = GenerationError(error_message(diagnostic),
+                        uncertain=diagnostic['uncertain'], diagnostic=diagnostic)
+                    if transient and attempt < self.retries and not self.should_stop():
                         delay = self.retry_delay(exc, attempt)
                         if delay <= 60:
                             self.sleep(delay)
                             continue
-                    uncertain = status is None or status >= 500 and not transient
-                    # Do not log exception strings, bodies, headers or tracebacks from the SDK.
-                    detail = ({401: "autenticação", 403: "permissão", 400: "parâmetros",
-                               429: "limite/quota; confira faturamento e limites",
-                               503: "indisponibilidade"}.get(status, "falha de comunicação"))
-                    if code in {"insufficient_quota", "credit_balance_exhausted", "organization_usage_limit_exceeded",
-                                "organization_spend_limit_exceeded", "project_spend_limit_exceeded",
-                                "slow_down", "rate_limit_exceeded", "server_is_overloaded"}:
-                        detail += f" ({code})"
-                    raise GenerationError(f"OpenAI: {detail}; chamadas API: {self.api_attempts}.",
-                                          uncertain=uncertain) from None
+                    raise self.last_error from None
         try:
             if not response.data or len(response.data) != job.quantidade:
                 raise ValueError()
@@ -178,8 +180,11 @@ class OpenAIImageGenerator(ImageGenerator):
                     if image.format != FORMATS[self.settings.output_format]:
                         raise ValueError()
                     image.verify()
-        except Exception:
-            raise GenerationError("Resposta de imagem inválida; revisar antes de reenviar.", uncertain=True) from None
+        except Exception as exc:
+            diagnostic = classify_exception(exc, timeout=self.timeout, attempts=self.api_attempts,
+                                            elapsed=time.monotonic() - started, request_id=self.last_request_id)
+            diagnostic['category'] = 'invalid_image'
+            raise GenerationError(error_message(diagnostic), uncertain=True, diagnostic=diagnostic) from None
         # Preserve partial files for recovery. Exclusive creation prevents overwrites.
         try:
             for path, payload in zip(job.saidas, decoded):
@@ -189,8 +194,10 @@ class OpenAIImageGenerator(ImageGenerator):
                     handle.flush()
                     os.fsync(handle.fileno())
         except OSError as exc:
+            diagnostic = classify_exception(exc, timeout=self.timeout, attempts=self.api_attempts,
+                                            elapsed=time.monotonic() - started, request_id=self.last_request_id)
+            diagnostic['category'] = 'storage'
             raise OutputStorageError(
-                f"Falha ao gravar saída ({type(exc).__name__}); lote interrompido para revisão.",
-                uncertain=True,
+                error_message(diagnostic), uncertain=True, diagnostic=diagnostic,
             ) from None
         return job.saidas

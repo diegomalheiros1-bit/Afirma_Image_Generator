@@ -159,6 +159,12 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                         if lan:
                             raise PermissionError("Remova a chave somente no computador local.")
                         session.clear_api_key()
+                    elif self.path == '/api/selection':
+                        session.set_selection(data['mode'], data.get('run_id'), data.get('ids'))
+                    elif self.path == '/api/reviews':
+                        result = {'items': session.reviews()}
+                    elif self.path == '/api/review/action':
+                        session.review_action(data['id'], data['action'], data.get('consent', False))
                     elif self.path == "/api/validate":
                         session.idle()
                         result = session.validate_campaign()

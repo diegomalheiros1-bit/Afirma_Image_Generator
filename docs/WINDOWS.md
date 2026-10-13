@@ -11,6 +11,9 @@ continua no computador e o servidor interno aceita apenas `127.0.0.1`.
 2. Extraia o ZIP completo e mantenha `_internal` ao lado de `Afirma-Image-Studio.exe`.
 3. Abra o executável. Não é necessário instalar Python nem manter terminal aberto.
 4. Selecione planilha, referências e pasta de saída. Confira os limites da execução.
+   Os limites de Configurações prevalecem sobre `Limite_Por_Execucao` do Excel,
+   sem alterar a planilha. Para dez imagens, use dez itens/dez imagens e desative
+   o modo seguro; a quantidade por linha e os itens pendentes são respeitados.
 5. Informe sua chave em **Configurações > Opções avançadas**. A verificação de
    autenticação não gera imagens e não confirma saldo nem acesso ao modelo.
 6. Confira e simule a campanha. Os três botões têm ajuda ao passar o mouse ou
@@ -29,6 +32,11 @@ botão, abra `Afirma-Image-Studio.exe --simulation-only`.
 
 Ao tentar fechar durante uma campanha, escolha entre continuar ou encerrar após
 a imagem atual. Na segunda opção, a janela aguarda o salvamento do resultado.
+Uma chamada já iniciada pode continuar até retornar ou atingir o timeout;
+fechar localmente não confirma cancelamento remoto. O botão **Interromper lote**
+impede os próximos itens e mantém a janela ativa enquanto aguarda o atual.
+Na versão 1.0.3, uma falha incerta interrompe automaticamente o lote e preserva
+`REVISAO`. Veja [diagnóstico e orientação de timeout](TIMEOUT_E_INTERRUPCAO.md).
 Forçar o encerramento pelo Gerenciador de Tarefas ou desligar o computador
 interrompe essa proteção e pode exigir revisão do histórico na próxima abertura.
 
@@ -61,14 +69,21 @@ PyInstaller, com versões fixadas nos arquivos de requisitos:
 ```powershell
 python -m venv .venv-desktop
 .\.venv-desktop\Scripts\python.exe -m pip install -r requirements-build-windows.txt
-.\.venv-desktop\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv-desktop\Scripts\python.exe scripts/run_local_tests.py
 .\.venv-desktop\Scripts\python.exe desktop.py --simulation-only
 .\.venv-desktop\Scripts\python.exe scripts/build_windows_package.py
 ```
 
+O comando de testes bloqueia conexões externas e grava logs em uma pasta
+nova de `output/local-tests`, preservando os logs da instalação do usuário.
+Na versão 1.0.4, o diagnóstico mantém a API real bloqueada, simula dez itens
+e verifica seleção, histórico reaberto e revisão fictícia em janelas pequenas
+e ampliadas. Consulte [retomada e histórico](EXECUCAO_RETOMADA_HISTORICO.md).
+
 A build usa `desktop.py`, o backend WebView2 e o modo Windows GUI, sem console.
 O script rejeita credenciais e planilhas no pacote. Antes de criar o ZIP,
-executa o próprio `.exe` com `--self-test` em uma pasta nova: três itens simulados,
+executa o próprio `.exe` com `--self-test` em uma pasta nova: dez itens simulados
+mesmo com limite do Excel em 1,
 seleção de arquivos, nomes normalizados, rejeição local de chave incompleta,
 maximização, restauração, layouts menores, temas e log. Também testa a janela
 paga com backend bloqueado e início interceptado: cancelamento, falta de chave,

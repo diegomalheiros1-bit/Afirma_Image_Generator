@@ -1,7 +1,8 @@
 # Afirma Image Studio
 
-O painel de progresso mostra somente a sessão atual. Após selecionar uma
-planilha, abra **Última execução desta planilha** para consultar o log salvo em
+O painel de progresso acompanha a sessão atual. Após selecionar uma planilha,
+consulte **Histórico de execuções** para escolher um registro antigo ou abra
+**Última execução desta planilha** para consultar o log salvo em
 `<planilha>.studio-run.json`: horários UTC, duração total e por item, status,
 eventos e resumo. O arquivo não inclui chave da API nem prompts. As próximas
 execuções também preservam cada registro em `<planilha>.studio-runs/`, sem
@@ -63,8 +64,10 @@ São aceitas de 1 a 16 referências, cada uma com menos de 50 MiB e conteúdo v�
 
 Depois da seleção, o Studio informa quantos itens têm prompt, quantos estão
 pendentes e quantas imagens estão previstas para os pendentes. Também mostra o
-lote estimado para a próxima execução: ele respeita o menor limite entre
-`MAX_JOBS_PER_RUN` e `Limite_Por_Execucao`, além de `MAX_IMAGES_PER_RUN`.
+lote estimado para a próxima execução. No Studio, os limites de itens e imagens
+são os definidos em Configurações.
+Eles prevalecem sobre `Limite_Por_Execucao` sem escrever na planilha; o comando
+CLI continua usando o menor entre `MAX_JOBS_PER_RUN` e `Limite_Por_Execucao`.
 Linhas que excedam esses limites permanecem pendentes para execuções futuras.
 Quando `Quantidade` está vazia, considera-se uma imagem; quantidades inválidas
 são sinalizadas e ficam fora da estimativa.
@@ -168,11 +171,12 @@ Fontes oficiais conferidas em 06/10/2026:
 - Studio: preferências salvas > valores não secretos do ambiente/`.env` do
   **projeto** > padrões. Alterações aplicadas na sessão têm precedência na próxima
   execução; o snapshot da interface prevalece sobre os parâmetros de imagem do
-  ambiente. Pasta de saída vazia usa o Excel. O máximo de itens continua sendo o
-  menor entre limite da interface e `Limite_Por_Execucao` do Excel.
+  ambiente. Pasta de saída vazia usa o Excel. O máximo de itens informado na
+  interface prevalece sobre `Limite_Por_Execucao` do Excel, sem editar o arquivo.
 - Simular impõe `DRY_RUN=SIM`; gerar impõe `DRY_RUN=NAO`, somente quando o servidor
-  foi iniciado explicitamente com `--enable-api`. Modo seguro mantém a trava
-  existente dos três limites <= 1. Simulação não lê a chave para criar clientes.
+  foi iniciado explicitamente com `--enable-api`. Modo seguro exige limites
+  de itens e imagens da interface <= 1. Simulação não lê a chave
+  para criar clientes.
 - Aplicar nesta sessão não grava arquivos. Salvar preferências grava atomicamente
   `.studio-settings.json` (ignorado no Git), somente com uma lista permitida de
   parâmetros. `--settings <arquivo>` permite usar outro destino local.
@@ -285,6 +289,35 @@ O aplicativo não altera o Firewall automaticamente. Nesta validação, o usuár
 confirmou a abertura pelo celular sem ser necessário adicionar a regra tentada.
 
 ## Ajuda nas ações e confirmação da geração
+
+Na versão 1.0.7, escolha **Gerar pendentes**, **Repetir erros** ou **Repetir
+itens em revisão**. A opção combinada saiu do seletor. No histórico, use
+**Retomar lote** para preparar a conclusão de uma execução original e
+**Escolher outra ação** para voltar ao seletor. Os botões têm ajuda por mouse
+e teclado, inclusive os de revisão, retomada, pausa e confirmações.
+Revisões liberadas entram exclusivamente na ação de revisão ou na retomada.
+
+
+A versão 1.0.4 acrescenta seleção por elegibilidade, conclusão da seleção
+original, revisão com provas, histórico persistente e tempos legíveis.
+Consulte [execução, retomada e histórico](EXECUCAO_RETOMADA_HISTORICO.md).
+Na campanha, escolha **O que deseja executar?** e **Conferir seleção** antes
+de simular. Históricos antigos sem IDs exigem seleção explícita. A liberação
+de revisão exige confirmação e não inicia geração automaticamente.
+
+Na versão 1.0.5, use **Em revisão — novas tentativas** para executar somente
+itens liberados no fluxo de revisão. Ao liberar, uma mensagem confirma o ID,
+o item continua visível como liberado e essa opção é selecionada automaticamente.
+Confira os IDs da prévia antes de confirmar a geração paga.
+
+A versão 1.0.6 também identifica liberações persistidas quando o Excel ainda
+mostra `REVISAO`. O modal informa os IDs e o motivo correto caso a seleção
+esteja vazia. Não é necessário mudar o status da planilha para reconhecer a
+liberação; as verificações de correspondência continuam obrigatórias.
+
+A versão 1.0.3 acrescenta diagnóstico específico e interrupção na primeira
+falha incerta. Consulte [timeout e interrupção](TIMEOUT_E_INTERRUPCAO.md) para
+as mensagens, contagens, regras de repetição e limitações da validação.
 
 Os botões Conferir, Simular e Gerar exibem tooltips ao passar o mouse ou
 receber foco pelo teclado. Conferir valida a campanha; Simular executa o

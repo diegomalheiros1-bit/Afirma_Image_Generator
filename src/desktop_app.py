@@ -53,8 +53,9 @@ class DesktopApp:
         if self.close_pending:
             return False
         if not self.window.create_confirmation_dialog("Encerrar campanha?",
-                "Há uma campanha em andamento. Deseja encerrá-la após a imagem atual?\n\n"
-                "A janela continuará aberta até salvar o resultado. Nenhum novo item será iniciado."):
+                "Há uma campanha em andamento. Deseja impedir os próximos itens e fechar após o atual?\n\n"
+                "A chamada atual pode continuar até retornar ou atingir o timeout. Encerrar localmente "
+                "não confirma cancelamento remoto. A janela ficará aberta até preservar arquivos e histórico."):
             return False
         with self.session.lock:
             if not self.session.active:

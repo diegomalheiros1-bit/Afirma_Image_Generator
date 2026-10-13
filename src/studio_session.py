@@ -170,6 +170,135 @@ class StudioSession:
         self.run_log = None
         self._run_clock = None
         self._item_clocks = {}
+        self.selection_mode = 'pending'
+        self.resume_run_id = None
+        self.explicit_ids = []
+
+    def history(self):
+        if not self.queue:
+            return {'runs': [], 'warnings': []}
+        paths = list(Path(str(self.queue) + '.studio-runs').glob('*.json'))
+        paths.append(Path(str(self.queue) + '.studio-run.json'))
+        records, warnings = {}, []
+        for path in paths:
+            if not path.exists():
+                continue
+            try:
+                value = json.loads(path.read_text('utf-8'))
+                if not isinstance(value, dict) or not isinstance(value.get('events', []), list):
+                    raise ValueError()
+                if any(not isinstance(e, dict) for e in value.get('events', [])):
+                    raise ValueError()
+                if value.get('run_id') is not None and not isinstance(value['run_id'], str):
+                    raise ValueError()
+                for event in value.get('events', []):
+                    if 'outputs' in event and (not isinstance(event['outputs'], list) or
+                            any(not isinstance(path, str) for path in event['outputs'])):
+                        raise ValueError()
+                    for field in ('diagnostic', 'usage'):
+                        if field in event and not isinstance(event[field], dict):
+                            raise ValueError()
+                for field in ('settings', 'counts', 'result'):
+                    if field in value and not isinstance(value[field], dict):
+                        raise ValueError()
+                for field in ('selected_ids', 'original_selected_ids'):
+                    if field in value and (not isinstance(value[field], list) or
+                            any(not isinstance(key, str) or not key for key in value[field])):
+                        raise ValueError()
+                if 'image' in value.get('settings', {}) and not isinstance(value['settings']['image'], dict):
+                    raise ValueError()
+                records[value.get('run_id') or path.name] = value
+            except (ValueError, OSError):
+                warnings.append('Histórico indisponível ou inválido: ' + path.name)
+        return {'runs': sorted(records.values(), key=lambda r: str(r.get('started_at', '')), reverse=True), 'warnings': warnings}
+
+    def set_selection(self, mode, run_id=None, ids=None):
+        from src.run_selection import MODES
+        from src.job_values import canonical_id
+        self.idle()
+        if mode not in MODES:
+            raise ValueError('Seleção inválida.')
+        self.selection_mode, self.resume_run_id = mode, run_id
+        self.explicit_ids = [canonical_id(v) for v in (ids or [])]
+
+    def selection(self, config, prefs):
+        from src.run_selection import plan_selection
+        from src.execution_state import Journal
+        original = None
+        if self.selection_mode == 'resume':
+            previous = next((r for r in self.history()['runs'] if r.get('run_id') == self.resume_run_id), None)
+            if self.resume_run_id and previous is None:
+                raise ValueError('Execução de origem indisponível. Selecione outro histórico ou informe os IDs explicitamente.')
+            previous = previous or self.run_log or {}
+            original = previous.get('original_selected_ids') or previous.get('selected_ids') or self.explicit_ids
+        frame = load_queue(self.queue, reference_mode=self.mode)
+        return plan_selection(frame, Journal(self.queue).records, config, prefs['max_jobs'], prefs['max_images'], self.selection_mode, original)
+
+    def reviews(self):
+        from src.execution_state import Journal
+        from src.run_selection import review_evidence
+        from src.job_values import canonical_id
+        if not self.queue:
+            return []
+        config, _ = self.snapshot()
+        records = Journal(self.queue).records
+        result = []
+        for _, row in load_queue(self.queue, reference_mode=self.mode).iterrows():
+            key = canonical_id(row['ID'])
+            record = records.get(key, {})
+            if cell_text(row['Status']).upper() not in {'REVISAO', 'PROCESSANDO'} and record.get('phase') not in {'uncertain', 'in_flight', 'retry_authorized'}:
+                continue
+            from src.generation_errors import sanitize_diagnostic
+            event = next((e for run in self.history()['runs'] for e in reversed(run.get('events', []))
+                          if e.get('id') == key and e.get('type') == 'item_end'), {})
+            result.append(dict(id=key, released=record.get('phase') == 'retry_authorized',
+                diagnostic=sanitize_diagnostic(record.get('error', {})),
+                calls=record.get('api_attempts'), at=event.get('at'), elapsed_seconds=event.get('elapsed_seconds'),
+                evidence=review_evidence(row, record, config)))
+        return result
+
+    def review_action(self, item_id, action, consent=False):
+        from src.execution_state import Journal
+        from src.run_selection import review_evidence
+        from src.job_values import canonical_id
+        from src.excel_reader import save_queue
+        from src.generation_errors import sanitize_diagnostic
+        self.idle()
+        if action not in {'recover', 'release'} or consent is not True:
+            raise ValueError('Confirme explicitamente a ação de revisão.')
+        config, _ = self.snapshot()
+        with queue_lock(self.queue):
+            frame = load_queue(self.queue, reference_mode=self.mode)
+            index = next((i for i, r in frame.iterrows() if canonical_id(r['ID']) == item_id), None)
+            if index is None:
+                raise ValueError('Item não encontrado.')
+            journal = Journal(self.queue)
+            record = journal.records.get(item_id, {})
+            if cell_text(frame.loc[index, 'Status']).upper() not in {'REVISAO', 'PROCESSANDO'}:
+                raise ValueError('Este item não está em revisão.')
+            evidence = review_evidence(frame.loc[index], record, config)
+            if action == 'recover':
+                if not evidence['recoverable']:
+                    raise ValueError(evidence['reason'])
+                frame.at[index, 'Status'] = 'CONCLUIDO'
+                frame.at[index, 'Observacao'] = 'Recuperado por ação explícita; hashes e identidade comprovados.'
+                journal.put(item_id, review_actions=list(record.get('review_actions', [])) +
+                            [dict(at=self._stamp(), action='recover', verified_identity=True, verified_hashes=True)])
+                save_queue(frame, self.queue)
+            else:
+                if not evidence['releasable']:
+                    raise ValueError(evidence['reason'])
+                audit = list(record.get('review_actions', []))
+                audit.append(dict(at=self._stamp(), action='release', prior_phase=record.get('phase'),
+                                  diagnostic=sanitize_diagnostic(record.get('error', {})), duplicate_charge_acknowledged=True,
+                                  prior_attempt={name: deepcopy(record.get(name)) for name in
+                                      ('execution', 'execution_fingerprint', 'row_fingerprint', 'row_fingerprint_version',
+                                       'outputs', 'hashes', 'api_attempts', 'task_attempts')}))
+                journal.put(item_id, phase='retry_authorized', review_actions=audit)
+                frame.at[index, 'Status'] = 'PENDENTE'
+                frame.at[index, 'Observacao'] = 'Nova tentativa liberada explicitamente; possível cobrança adicional reconhecida.'
+                save_queue(frame, self.queue)
+        self._refresh_queue_summary()
 
     @staticmethod
     def _stamp():
@@ -339,7 +468,9 @@ class StudioSession:
         invalid_quantities = 0
         execution_items = 0
         execution_images = 0
-        item_limit = min(self.preferences["max_jobs"], config["limit"])
+        # The Studio form is the explicit source of execution limits. The
+        # workbook limit remains a CLI default and must not silently cap it.
+        item_limit = self.preferences["max_jobs"]
         for _, row in frame.loc[pending_prompts].iterrows():
             try:
                 quantity = parse_quantity(row.get("Quantidade"))
@@ -399,9 +530,10 @@ class StudioSession:
                                         if p == config["reference_dir"]), "")
             self.legacy_root = config["reference_dir"]
             self.items, self.result, self.error = [], {}, ""
+            self.selection_mode, self.resume_run_id, self.explicit_ids = "pending", None, []
             report = Path(str(path) + ".studio-run.json")
             try:
-                self.run_log = json.loads(report.read_text("utf-8")) if report.exists() else None
+                self.run_log = next(iter(self.history()['runs']), None)
             except (ValueError, OSError):
                 self.run_log = None
 
@@ -472,7 +604,7 @@ class StudioSession:
         prefs = self.checked_preferences(self.preferences)
         # Session folder edits override the sheet registry without writing it.
         config = load_config(self.queue, reference_mode="direct")
-        config.update(studio=True, reference_mode=self.mode,
+        config.update(studio=True, reference_mode=self.mode, limit=prefs["max_jobs"],
                       image_settings=ImageSettings(**prefs["image"]))
         if self.mode == "spreadsheet":
             roots = validate_folders(self.folders, self.default_folder)
@@ -497,12 +629,10 @@ class StudioSession:
             raise ValueError("Cada linha deve ter ID preenchido, único e estável.")
         from src.execution_state import Journal
         records = Journal(self.queue).records
+        selection = self.selection(config, prefs)
         errors, plan, outputs = [], [], set()
         for _, row in df.iterrows():
-            # Recovery can safely requeue prepared jobs before any API call.
-            # Include their references in the same preflight snapshot as pending jobs.
-            record = records.get(canonical_id(row["ID"]), {})
-            if cell_text(row["Status"]).upper() != "PENDENTE" and record.get("phase") != "prepared":
+            if not any(d['id'] == canonical_id(row['ID']) and d['category'] in {'selected', 'limit'} for d in selection['decisions']):
                 continue
             try:
                 job = make_job(row, config, True)
@@ -531,7 +661,8 @@ class StudioSession:
             images += job["quantity"]
         return {"jobs": plan, "settings": asdict(config["image_settings"]),
                 "experimental": config["image_settings"].experimental,
-                "execution_preview": dict(items=selected, images=images,
+                "selection": {k: v for k, v in selection.items() if k != "indices"},
+                "execution_preview": dict(items=len(selection['selected_ids']), images=selection['images'],
                     output_dir=str(config["result_dir"]),
                     safe_mode_compatible=not prefs["safe_mode"] or (
                         prefs["max_jobs"] <= 1 and prefs["max_images"] <= 1 and config["limit"] <= 1))}
@@ -551,7 +682,7 @@ class StudioSession:
                 event = {"at": self._stamp(), "type": "item_end", "id": values["id"],
                     "status": values["status"], "message": values["message"],
                     "elapsed_seconds": round(time.monotonic() - started, 3) if started is not None else None}
-                for key in ("outputs", "api_attempts", "usage", "request_id"):
+                for key in ("outputs", "api_attempts", "usage", "request_id", "diagnostic"):
                     if values.get(key) is not None:
                         event[key] = values[key]
                 self.run_log["events"].append(event)
@@ -568,18 +699,27 @@ class StudioSession:
                 raise ValueError("API real bloqueada nesta sessão. A implementação deve ser validada antes da autorização.")
             plan = self.validate_campaign()
             config, prefs = self.snapshot()
+            if not plan['execution_preview']['items']:
+                raise ValueError('Nenhum item elegível. Confira os motivos na prévia e os itens em revisão.')
+            config['selection_mode'] = self.selection_mode
+            config['original_ids'] = plan['selection']['selected_ids']
+            config['selection_ids'] = plan['selection']['selected_ids']
             config["dry_run"] = not real
             config["expected_reference_hashes"] = {
                 path: digest(Path(path)) for job in plan["jobs"] for path in job["references"]}
             queue = self.queue
             self.active = True
-            self.error, self.result, self.items, self.total = "", {}, [], 0
+            self.error, self.result, self.items, self.total = "", {}, [], plan['execution_preview']['items']
             self._run_clock = time.monotonic()
             self._item_clocks = {}
-            self.run_log = {"version": 1, "run_id": uuid.uuid4().hex, "started_at": self._stamp(), "finished_at": None,
+            previous = next((r for r in self.history()['runs'] if r.get('run_id') == self.resume_run_id), self.run_log or {}) if self.selection_mode == 'resume' else {}
+            self.run_log = {"version": 2, 'selected_ids': plan['selection']['selected_ids'],
+                            'original_selected_ids': previous.get('original_selected_ids') or previous.get('selected_ids') or plan['selection']['selected_ids'],
+                            'parent_run_id': previous.get('run_id'), 'selection_mode': self.selection_mode,
+                            'selection_decisions': plan['selection']['decisions'], "run_id": uuid.uuid4().hex, "started_at": self._stamp(), "finished_at": None,
                             "elapsed_seconds": None, "mode": "real" if real else "simulation",
-                            "status": "running", "planned_items": len(plan["jobs"]),
-                            "planned_images": sum(job["quantity"] for job in plan["jobs"]),
+                            "status": "Gerando" if real else "Simulando", "planned_items": plan['execution_preview']['items'],
+                            "planned_images": plan['execution_preview']['images'],
                             "settings": {"image": deepcopy(prefs["image"]), "max_jobs": prefs["max_jobs"],
                                          "max_images": prefs["max_images"], "timeout": prefs["timeout"],
                                          "retries": prefs["retries"]}, "events": [], "result": {}}
@@ -595,6 +735,7 @@ class StudioSession:
 
             def work():
                 from main import main
+                final_status = 'Erro'
                 try:
                     if environment is None and real:
                         from dotenv import dotenv_values
@@ -612,11 +753,10 @@ class StudioSession:
                     result = main(queue, env=effective_env, overrides=config, control=control)
                     with self.lock:
                         self.result = result
-                        self.status = "Interrompido" if control.stopped else "Finalizado"
+                    final_status = result.get('stop_reason') or ('Finalizado com erros' if result['errors'] else 'Finalizado')
                 except Exception as exc:
                     with self.lock:
                         self.error = str(exc) if isinstance(exc, (ValueError, OSError, PersistenceError)) else "Falha local; confira o log sem apagar o histórico."
-                        self.status = "Erro"
                 finally:
                     with self.lock:
                         try:
@@ -625,17 +765,30 @@ class StudioSession:
                             self.queue_summary = None
                             if not self.error:
                                 self.error = "Execução encerrada; não foi possível atualizar o resumo da planilha. Selecione-a novamente para conferir os estados."
-                        self.active = False
                         self.run_log["finished_at"] = self._stamp()
                         self.run_log["elapsed_seconds"] = round(time.monotonic() - self._run_clock, 3)
-                        self.run_log["status"] = self.status
+                        self.run_log["status"] = final_status
                         self.run_log["result"] = dict(self.result)
+                        started = sum(event['type'] == 'item_start' for event in self.run_log['events'])
+                        self.run_log['counts'] = dict(planned=self.run_log['planned_items'], started=started,
+                            completed=self.result.get('success', 0),
+                            review=sum(event.get('status') == 'REVISAO' for event in self.run_log['events']),
+                            waiting=max(0, self.run_log['planned_items'] - started))
+                        self.run_log['counts']['errors'] = sum(e.get('status') == 'ERRO' for e in self.run_log['events'])
+                        self.run_log['selection_counts'] = {category: sum(d['category'] == category for d in self.run_log['selection_decisions'])
+                            for category in ('outside', 'limit', 'completed', 'error', 'review')}
+                        durations = [e['elapsed_seconds'] for e in self.run_log['events'] if e.get('status') in {'CONCLUIDO', 'SIMULADO'} and isinstance(e.get('elapsed_seconds'), (int, float))]
+                        self.run_log['mean_completed_seconds'] = sum(durations)/len(durations) if durations else None
                         if self.error:
                             self.run_log["error"] = self.error
                         try:
                             self._save_run_log()
                         except OSError:
                             self.run_log["log_error"] = "Falha ao persistir o log; preserve a planilha e confira o disco."
+                        # Publish completion only after the last persistence
+                        # attempt, under the same lock used by state().
+                        self.status = final_status
+                        self.active = False
 
             self.worker = threading.Thread(target=work, name="afirma-campaign", daemon=False)
             self.worker.start()
@@ -645,9 +798,19 @@ class StudioSession:
         with self.lock:
             if not self.active or not self.control:
                 raise ValueError("Nenhuma execução ativa.")
+            if self.control.stopped and action != 'stop':
+                raise ValueError('Interrupção já solicitada; aguarde o item atual e o salvamento do histórico.')
             self.control.command(action)
             self.status = {"pause": "Pausa solicitada — após o item atual", "resume": "Executando",
-                           "stop": "Encerrando após o item atual"}[action]
+                           "stop": "Interrupção solicitada — aguardando o item atual"}[action]
+            if self.run_log:
+                self.run_log['status'] = self.status
+                if action == 'stop':
+                    self.run_log['stop_requested_at'] = self._stamp()
+                try:
+                    self._save_run_log()
+                except OSError:
+                    self.run_log['log_error'] = 'Falha ao persistir o log; preserve a planilha e confira o disco.'
 
     def state(self):
         with self.lock:
@@ -656,7 +819,10 @@ class StudioSession:
                         folders=deepcopy(self.folders), default_folder=self.default_folder,
                         preferences=deepcopy(self.preferences), active=self.active,
                         paused=bool(self.control and self.control.paused), status=self.status,
+                        stopping=bool(self.active and self.control and self.control.stopped),
                         total=self.total, items=deepcopy(self.items), result=dict(self.result), error=self.error,
-                        run_log=deepcopy(self.run_log),
+                        run_log=deepcopy(self.run_log), history=self.history(),
+                        selection_mode=self.selection_mode, resume_run_id=self.resume_run_id,
+                        current_item_seconds=(round(time.monotonic()-min(self._item_clocks.values()), 3) if self.active and self._item_clocks else None),
                         allow_api=self.allow_api, app_mode=self.app_mode, app_info=app_info(), api_key_status=self.api_key_status(),
                         api_connection=deepcopy(self._api_connection))

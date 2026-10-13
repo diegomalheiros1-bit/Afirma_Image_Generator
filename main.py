@@ -2,6 +2,7 @@ from dataclasses import replace
 from copy import deepcopy
 from pathlib import Path
 import os
+import time
 import uuid
 from dotenv import dotenv_values
 
@@ -18,6 +19,7 @@ from src.generation_job import GenerationJob
 from src.image_generator import (GenerationError, MockImageGenerator, OpenAIImageGenerator,
                                  OutputStorageError)
 from src.logger import get_logger
+from src.generation_errors import classify_exception, error_message, interruption_reason, sanitize_diagnostic
 
 QUEUE_PATH = Path("input/fila.xlsx")
 logger = get_logger()
@@ -92,8 +94,12 @@ def recover(df, journal, queue, config=None):
         if not record and status not in {"PROCESSANDO", "REVISAO"}:
             continue
         phase = record.get("phase") if record else None
+        if phase == 'retry_authorized':
+            from src.run_selection import review_evidence
+            if config and review_evidence(row, record, config)['releasable']:
+                continue
         reason = "Resultado incerto ou divergente; confira .state.json e arquivos antes de reenviar."
-        if phase == "rejected":
+        if phase in {"rejected", "local_rejected"}:
             if status == "PROCESSANDO":
                 update(idx, "Status", "ERRO")
                 update(idx, "Observacao", "API rejeitou a chamada; corrija a causa antes de retornar a PENDENTE.")
@@ -139,7 +145,8 @@ def recover(df, journal, queue, config=None):
                             recovery_config["result_dir"] = Path(record["result_dir"])
                         job = make_job(row, recovery_config, True)
                         _, current_signature = execution_identity(job, row)
-                        row_valid = row_valid and current_signature == record.get("execution_fingerprint")
+                        row_valid = (row_valid and current_signature == record.get("execution_fingerprint")
+                                     and historic_paths == tuple(job.saidas))
                         if not row_valid:
                             reason = "Configuração, referências (caminhos/hashes) ou linha divergente; restaure a execução original ou mantenha REVISAO."
                 valid = files_valid and row_valid
@@ -214,6 +221,12 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
     if real and not dry:
         blocked = recover(df, journal, queue, config)
     pending = [idx for idx, row in df.iterrows() if idx not in blocked and is_pending(row["Status"])]
+    if config.get('selection_mode'):
+        from src.run_selection import plan_selection
+        selection = plan_selection(df, Journal(queue).records, config,
+            min(max_jobs, config['limit']), max_images, config['selection_mode'], config.get('original_ids'))
+        pending = [idx for idx in selection['indices'] if idx not in blocked and
+                   ('selection_ids' not in config or canonical_id(df.loc[idx, 'ID']) in config['selection_ids'])]
     selected, images = [], 0
     for idx in pending:
         try:
@@ -233,8 +246,9 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
     print(f"Provider: {'OpenAI' if real else provider}\nJobs encontrados: {len(pending)}\n"
           f"Imagens previstas: {images}\nLimite configurado: {min(max_jobs, config['limit'])} jobs / {max_images} imagens")
     logger.info("Início | total=%s pendentes=%s selecionados=%s dry_run=%s", len(df), len(pending), len(selected), dry)
-    success = errors = 0
+    success = errors = review = 0
     processed = 0
+    stop_reason = None
     if control:
         control.event("plan", total=len(selected), images=images)
     mock_dir = config["result_dir"] / "_mock" / uuid.uuid4().hex
@@ -244,6 +258,7 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
         if control and not control.checkpoint():
             break
         processed += 1
+        item_clock = time.monotonic()
         key = ids[idx]
         row = df.loc[idx]
         logger.info("Iniciado ID=%s", key)
@@ -262,6 +277,9 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
             if control:
                 control.event("item", id=key, status="ERRO", message=str(exc))
             if real and not dry:
+                journal.put(key, phase='local_rejected',
+                            error=dict(category='local_validation', exception_type='ValueError', uncertain=False),
+                            local_validation_calls=0)
                 df.at[idx, "Status"] = "ERRO"
                 df.at[idx, "Observacao"] = str(exc)
                 save_queue(df, queue)
@@ -313,35 +331,46 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
             logger.info("ID=%s tentativa da tarefa=%s chamada API=%s", key, attempts, previous_api + number)
 
         generator.before_attempt = before_attempt
+        generator.should_stop = lambda: bool(control and control.stopped)
         try:
             generator.generate(replace(job, tentativas=attempts, status="PROCESSANDO"))
             hashes = verified_outputs(job.saidas, settings.output_format)
         except PersistenceError:
             raise
-        except OutputStorageError as exc:
-            try:
-                journal.put(key, phase="uncertain", storage_failure=True)
-                df.at[idx, "Status"] = "REVISAO"
-                df.at[idx, "Observacao"] = str(exc)
-                save_queue(df, queue)
-            except PersistenceError:
-                raise
-            logger.error("ID=%s: %s", key, exc)
-            raise PersistenceError(
-                "Falha ao gravar imagem após resposta da API. Novas chamadas interrompidas; "
-                "preserve arquivos e .state.json para revisão."
-            ) from None
         except Exception as exc:
             uncertain = not isinstance(exc, GenerationError) or exc.uncertain
-            message = str(exc) if isinstance(exc, GenerationError) else "Falha após iniciar geração; resultado requer revisão."
-            journal.put(key, phase="uncertain" if uncertain else "rejected")
+            current_attempts = getattr(generator, 'api_attempts',
+                                       max(0, journal.records[key]['api_attempts'] - previous_api))
+            diagnostic = (dict(exc.diagnostic) if isinstance(exc, GenerationError) and exc.diagnostic else
+                          classify_exception(exc, timeout=getattr(generator, 'timeout', None),
+                                             request_id=getattr(generator, 'last_request_id', None)))
+            diagnostic.update(uncertain=uncertain, api_attempts=current_attempts,
+                              elapsed_seconds=round(time.monotonic() - item_clock, 3))
+            if isinstance(exc, OutputStorageError):
+                diagnostic['category'] = 'storage'
+            elif isinstance(exc, GenerationError) and not exc.diagnostic and not uncertain:
+                diagnostic['category'] = 'local_validation'
+            diagnostic = sanitize_diagnostic(diagnostic)
+            message = error_message(diagnostic)
+            journal.put(key, phase="uncertain" if uncertain else "rejected", error=diagnostic,
+                        **({'storage_failure': True} if isinstance(exc, OutputStorageError) else {}))
             df.at[idx, "Status"] = "REVISAO" if uncertain else "ERRO"
             df.at[idx, "Observacao"] = message
             save_queue(df, queue)
             errors += 1
-            logger.error("ID=%s: %s", key, message)
+            review += int(uncertain)
+            logger.error("ID=%s: %s | categoria=%s tipo=%s HTTP=%s codigo=%s requisicao=%s "
+                         "chamadas=%s duracao=%ss timeout=%ss", key, message, diagnostic['category'],
+                         diagnostic['exception_type'], diagnostic.get('http_status'), diagnostic.get('api_code'),
+                         diagnostic.get('request_id'), diagnostic['api_attempts'], diagnostic['elapsed_seconds'],
+                         diagnostic.get('timeout_seconds'))
             if control:
-                control.event("item", id=key, status=df.at[idx, "Status"], message=message)
+                control.event("item", id=key, status=df.at[idx, "Status"], message=message,
+                              diagnostic=diagnostic, api_attempts=current_attempts,
+                              request_id=diagnostic.get('request_id'))
+            if uncertain:
+                stop_reason = interruption_reason(diagnostic['category'])
+                break
             continue
         journal.put(key, phase="files_ready", hashes=hashes)
         df.at[idx, "Status"] = "CONCLUIDO"
@@ -355,8 +384,16 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
                           usage=getattr(generator, "last_usage", None),
                           request_id=getattr(generator, "last_request_id", None))
     summary = dict(processed=processed, success=success, errors=errors, ignored=len(df) - processed)
-    message = (f"Processamento finalizado\nProcessados: {processed}\nSucesso: {success}\n"
+    if not stop_reason and control and control.stopped and processed < len(selected):
+        stop_reason = 'Interrompido por solicitação do usuário'
+    if real or config.get('studio'):
+        summary.update(planned=len(selected), started=processed, completed=success,
+                       review=review, waiting=len(selected) - processed, stop_reason=stop_reason)
+    message = (f"{stop_reason or 'Processamento finalizado'}\nProcessados: {processed}\nSucesso: {success}\n"
                f"Erros: {errors}\nIgnorados: {summary['ignored']}")
+    if real or config.get('studio'):
+        message += (f"\nPlanejados: {len(selected)}\nIniciados: {processed}\nConcluídos: {success}"
+                    f"\nEm revisão: {review}\nAguardando início: {len(selected) - processed}")
     print(message)
     logger.info(message)
     return summary

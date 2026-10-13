@@ -71,6 +71,12 @@ def main():
         '7. Ao fechar durante uma campanha, é possível cancelar ou aguardar a imagem\n'
         '   atual terminar e salvar o resultado antes de encerrar.\n\n'
         'Em Configurações > Sobre, consulte a versão, informações da API e links oficiais.\n\n'
+        'EXECUCAO, RETOMADA E HISTORICO\n'
+        'Escolha pendentes, erros aptos ou concluir o lote original e confira a selecao.\n'
+        'Historico de execucoes fica ao lado da planilha e permanece apos reabrir.\n'
+        'Itens em revisao exigem provas para recuperar ou liberar nova tentativa.\n'
+        'Liberar uma chamada incerta pode resultar em outra cobranca; nao inicia geracao.\n'
+        'Consulte EXECUCAO_RETOMADA_HISTORICO.md neste pacote.\n\n'
         'REQUISITOS\nWindows 10/11 de 64 bits e Microsoft Edge WebView2 Runtime.\n'
         'O WebView2 é o componente da janela e não abre o navegador Edge.\n'
         'Se necessário, instale o Runtime oficial da Microsoft:\n'
@@ -88,6 +94,8 @@ def main():
         'Não há processamento com o aplicativo fechado ou computador desligado.\n'
         'Para bloquear o botão pago, inicie com o argumento --simulation-only.\n',
         encoding='utf-8')
+    guide = ROOT / 'docs' / 'EXECUCAO_RETOMADA_HISTORICO.md'
+    (destination / guide.name).write_text(guide.read_text('utf-8'), encoding='utf-8')
     files = package_files(destination)
     # Exercise the actual frozen .exe, WebView2 renderer and UI in isolated data.
     verification = release / 'verification'
@@ -103,7 +111,7 @@ def main():
             package.write(path, path.relative_to(release))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (release / 'SHA256.txt').write_text(f'{digest}  {archive.name}\n', encoding='ascii')
-    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'web/studio.html',
+    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide,
                     *sorted((ROOT / 'src').glob('*.py')), ROOT / 'requirements-desktop.txt',
                     ROOT / 'requirements-build-windows.txt', Path(__file__).resolve()]
     info = {

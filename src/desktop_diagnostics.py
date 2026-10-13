@@ -1,4 +1,4 @@
-"""Opt-in native diagnostic using only its own three-item workbook and fake keys."""
+"""Opt-in native diagnostic using its own ten-item workbook and fake keys."""
 from copy import deepcopy
 import hashlib
 import json
@@ -20,18 +20,22 @@ def prepare_diagnostics(root):
     sheet = book.active
     sheet.title = "Fila_Geracao"
     sheet.append(["ID", "Prompt_Padrao", "Prompt_Variacao", "Arquivo_Referencia", "Nome_Saida", "Status", "Tentativas", "Observacao"])
-    for i in range(1, 4):
+    for i in range(1, 11):
         sheet.append([str(i), "Fotografia de produto.", "Teste isolado.", reference.name,
                       f"produto.{i}", "PENDENTE", 0, ""])
     config = book.create_sheet("Configuracao")
     for row in [("Parametro", "Valor"), ("Pasta_Referencias", str(root)),
-                ("Pasta_Resultados", str(root / "images")), ("Limite_Por_Execucao", 3), ("Dry_Run", "SIM")]:
+                ("Pasta_Resultados", str(root / "images")), ("Limite_Por_Execucao", 1), ("Dry_Run", "SIM")]:
         config.append(row)
     book.save(queue)
     book.close()
-    session = StudioSession(root / "diagnostic-settings.json", env={})
+    import openai
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError('Network API client forbidden in diagnostics')
+    openai.OpenAI = forbidden_client
+    session = StudioSession(root / "diagnostic-settings.json", allow_api=False, env={})
     values = deepcopy(session.preferences)
-    values.update(max_jobs=3, max_images=3, safe_mode=False)
+    values.update(max_jobs=10, max_images=10, safe_mode=False)
     session.set_preferences(values)
 
     def ready(app):
@@ -87,9 +91,16 @@ def prepare_diagnostics(root):
         try:
             assert window.gui.renderer == "edgechromium"
             wait("typeof state !== 'undefined' && state !== null")
+            from src.app_info import APP_VERSION
+            report['app_version'] = window.evaluate_js('state.app_info.version')
+            assert report['app_version'] == APP_VERSION
+            assert window.evaluate_js('state.app_mode') == 'desktop'
+            assert window.evaluate_js("q('history-data').textContent.includes('Nenhuma execução')")
+            layout('empty-campaign-history')
             app.pick_files = lambda kind: {"queue": [str(queue)], "photos": [str(reference)], "folder": [str(root / 'images')]}[kind]
             click("#choose-queue")
-            wait("state.queue_summary && state.queue_summary.items_with_prompt === 3")
+            wait("state.queue_summary && state.queue_summary.items_with_prompt === 10")
+            assert window.evaluate_js("state.queue_summary.execution_images") == 10
             report["checks"].append("workbook-selection")
             window.evaluate_js("document.querySelector('#reference-mode').value='direct';document.querySelector('#reference-mode').dispatchEvent(new Event('change',{bubbles:true}))")
             wait("state.mode === 'direct'")
@@ -175,6 +186,20 @@ def prepare_diagnostics(root):
             wait("innerWidth > 1100")
             click("#settings-tab-generation")
             click("#back")
+            click('#settings-button')
+            window.evaluate_js("q('quality').value='max';q('timeout').value=120;q('quality').dispatchEvent(new Event('input',{bubbles:true}));q('timeout').dispatchEvent(new Event('input',{bubbles:true}))")
+            wait("!q('timeout-guidance').classList.contains('hidden')")
+            assert window.evaluate_js("q('timeout').value") == '120'
+            window.evaluate_js("q('timeout-guidance').scrollIntoView({block:'center'})")
+            layout('timeout-guidance-wide-dark')
+            window.evaluate_js("q('timeout').value=600;q('timeout').dispatchEvent(new Event('input',{bubbles:true}))")
+            wait("q('timeout-guidance').classList.contains('hidden')")
+            window.evaluate_js("q('timeout').value=120;q('timeout').dispatchEvent(new Event('input',{bubbles:true}))")
+            click('#apply')
+            wait("state.preferences.image.quality==='max' && state.preferences.timeout===120")
+            assert session.preferences['timeout'] == 120
+            click('#back')
+            report['checks'].append('max-timeout-guidance-nonblocking-no-silent-preference-changes')
             click("#validate")
             wait("document.querySelector('#plan-dialog').open")
             assert ".png" in window.evaluate_js("document.querySelector('#plan-data').textContent")
@@ -211,7 +236,9 @@ def prepare_diagnostics(root):
             wait("innerWidth > 1100")
             click("#real-start")
             wait("document.querySelector('#generation-dialog').open")
-            assert window.evaluate_js("document.querySelector('#generation-images').textContent") == 'Até 3'
+            assert window.evaluate_js("document.querySelector('#generation-images').textContent") == 'Até 10'
+            assert window.evaluate_js("document.querySelector('#generation-items').textContent") == 'Até 10'
+            assert window.evaluate_js("!q('generation-timeout-guidance').classList.contains('hidden') && !q('generation-confirm').disabled")
             layout("generation-wide-dark")
             window.resize(520, 500)
             wait("innerWidth < 520")
@@ -234,17 +261,17 @@ def prepare_diagnostics(root):
             assert window.evaluate_js("window.diagnosticPaidCalls") == 1
             assert not session.active and not session.allow_api
             assert hashlib.sha256(queue.read_bytes()).hexdigest() == before
-            session.preferences['max_images'] = 3
+            session.preferences['max_images'] = 10
             window.evaluate_js("api=window.diagnosticOriginalApi;refresh()")
             wait("state.allow_api === false && state.api_key_status === 'missing'")
             report["checks"].append("paid-dialog-cancel-escape-missing-key-stale-plan-and-single-submit-no-api")
             window.resize(1200, 800)
             wait("innerWidth > 1100")
             click("#start")
-            wait("state.result.success === 3")
+            wait("state.result.success === 10")
             assert hashlib.sha256(queue.read_bytes()).hexdigest() == before
             assert not Path(str(queue) + ".state.json").exists()
-            report["checks"].append("three-item-simulation-workbook-unchanged")
+            report["checks"].append("ten-item-studio-limit-overrides-sheet-one-workbook-unchanged")
             layout("simulation-finished")
             window.evaluate_js("document.querySelector('.run-history').scrollIntoView({block:'start'})")
             layout("log-wide-dark")
@@ -254,9 +281,130 @@ def prepare_diagnostics(root):
             layout("log-small-dark")
             assert window.evaluate_js("document.querySelector('.log-table-wrap').scrollWidth > document.querySelector('.log-table-wrap').clientWidth")
             report["checks"].append("log-scroll-contained-in-table")
+            # Keep the real gate off for the entire native diagnostic.
+            assert session.allow_api is False
+            try:
+                session.start(real=True)
+                raise AssertionError('Real gate must reject starts')
+            except ValueError:
+                pass
+            assert window.evaluate_js("[0,59,60,61,119,120,3600,59.5,null].map(formatDuration).join('|')") == '0 s|59 s|1 min|1 min 1 s|1 min 59 s|2 min|1 h|1 min|—'
+            assert window.evaluate_js("[59.4,119.5,3920,undefined,NaN,Infinity,-1].map(formatDuration).join('|')") == '59 s|2 min|1 h 5 min 20 s|—|—|—|—'
+            report['checks'].append('shared-duration-boundaries-real-gate-blocked')
+            window.evaluate_js("q('persistent-history').scrollIntoView({block:'start'})")
+            wait("q('history-data').textContent.includes('Simulado') || q('history-data').textContent.includes('Itens planejados')")
+            layout('persistent-history-small')
+            click('#selection-preview')
+            wait("q('selection-preview-data').textContent.includes('10 itens')")
+            window.evaluate_js("q('selection-preview-data').querySelector('details').open=true;q('execution-selection').scrollIntoView({block:'start'})")
+            layout('selection-preview-small')
+            window.resize(1200, 800)
+            wait('innerWidth>1100')
+            window.evaluate_js("q('persistent-history').scrollIntoView({block:'start'})")
+            layout('persistent-history-wide')
+            reopened = StudioSession(root / 'reopened-settings.json', allow_api=False, env={})
+            reopened.choose_queue(queue)
+            assert len(reopened.history()['runs']) == 1
+            run_id = session.run_log['run_id']
+            window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').click()")
+            wait("state.selection_mode==='resume'")
+            click('#selection-preview')
+            wait("q('selection-preview-data').textContent.includes('10 itens')")
+            assert session.selection_mode == 'resume'
+            assert session.allow_api is False
+            assert window.evaluate_js("[...q('execution-selection').options].map(o=>o.textContent).join('|')")=='Gerar pendentes|Repetir erros|Repetir itens em revisão'
+            assert window.evaluate_js("q('execution-choice').classList.contains('hidden') && !q('resume-options').classList.contains('hidden')")
+            layout('resume-from-history-small')
+            window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').scrollIntoView({block:'center'});[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').focus()")
+            wait("!q('action-tooltip').classList.contains('hidden') && q('action-tooltip').textContent.includes('execução original')")
+            layout('history-resume-tooltip')
+            click('#resume-exit')
+            wait("state.selection_mode==='pending' && !q('execution-choice').classList.contains('hidden')")
+            window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').click()")
+            wait("state.selection_mode==='resume'")
+            report['checks'].append('three-actions-resume-only-from-history')
+            report['checks'].append('history-reopened-original-selection-preview-api-remains-blocked')
+            click('#load-reviews')
+            wait("q('review-data').textContent.includes('Nenhum item')")
+            window.evaluate_js("q('review-section').scrollIntoView({block:'start'})")
+            layout('review-empty-wide')
+            # Fictional interrupted batch: six completed, one uncertain, three not started.
+            from src.execution_state import Journal, execution_identity, row_fingerprint
+            from src.excel_reader import load_queue
+            from main import make_job
+            book = __import__('openpyxl').load_workbook(queue)
+            for i in range(2, 8):
+                book['Fila_Geracao'][f'F{i}'] = 'CONCLUIDO'
+            book['Fila_Geracao']['F8'] = 'REVISAO'
+            book.save(queue)
+            book.close()
+            config, prefs = session.snapshot()
+            row = load_queue(queue, reference_mode='direct').iloc[6]
+            job = make_job(row, config, True)
+            identity, signature = execution_identity(job, row)
+            signature_row = dict(row)
+            signature_row['Arquivo_Referencia'] = ''
+            Journal(queue).put('7', phase='uncertain', outputs=[str(p) for p in job.saidas],
+                execution=identity, execution_fingerprint=signature, row_fingerprint=row_fingerprint(signature_row),
+                row_fingerprint_version=2, api_attempts=1,
+                error=dict(category='connection', exception_type='APIConnectionError', uncertain=True, request_id='req_fictional'))
+            click('#selection-preview')
+            wait("q('selection-preview-data').textContent.includes('3 itens')")
+            click('#load-reviews')
+            wait("q('review-data').textContent.includes('Item #7')")
+            window.evaluate_js("q('review-section').scrollIntoView({block:'start'})")
+            layout('review-uncertain-wide')
+            window.resize(520,500)
+            wait('innerWidth<520')
+            window.evaluate_js("q('review-section').scrollIntoView({block:'start'})")
+            layout('review-uncertain-small')
+            window.evaluate_js("[...q('review-data').querySelectorAll('button')].find(b=>b.textContent.includes('Liberar')).click()")
+            wait("[...document.querySelectorAll('dialog[open]')].some(d=>d.textContent.includes('outra cobrança'))")
+            assert window.evaluate_js("q('action-tooltip').textContent.includes('Fecha a confirmação')")
+            layout('review-confirmation-small')
+            window.evaluate_js("[...document.querySelector('dialog[open]').querySelectorAll('button')].find(b=>b.textContent==='Cancelar').click()")
+            assert load_queue(queue, reference_mode='direct').iloc[6]['Status'] == 'REVISAO'
+            assert session.allow_api is False
+            report['checks'].append('fictional-six-completed-one-review-three-resume-review-consent-cancel')
+            window.evaluate_js("[...q('review-data').querySelectorAll('button')].find(b=>b.textContent.includes('Liberar')).click()")
+            wait("[...document.querySelectorAll('dialog[open]')].some(d=>d.textContent.includes('outra cobrança'))")
+            window.evaluate_js("[...document.querySelector('dialog[open]').querySelectorAll('button')].find(b=>b.textContent==='Confirmar').click()")
+            wait("state.selection_mode==='review' && q('review-feedback').textContent.includes('Item #7 liberado') && q('selection-preview-data').textContent.includes('1 item selecionado')")
+            wait("q('review-data').textContent.includes('Liberado para nova tentativa')")
+            assert load_queue(queue, reference_mode='direct').iloc[6]['Status'] == 'PENDENTE'
+            assert session.allow_api is False and not session.active
+            assert session.validate_campaign()['selection']['selected_ids'] == ['7']
+            window.evaluate_js("q('review-section').scrollIntoView({block:'start'})")
+            layout('review-released-feedback-small')
+            window.evaluate_js("q('execution-selection').scrollIntoView({block:'start'})")
+            layout('review-retry-selection-small')
+            window.resize(1200,800)
+            wait('innerWidth>1100')
+            window.evaluate_js("q('review-section').scrollIntoView({block:'start'})")
+            layout('review-released-feedback-wide')
+            report['checks'].append('review-release-feedback-auto-select-only-authorized-no-generation')
+            # Regression: an already authorized item can still say REVISAO in Excel.
+            book = __import__('openpyxl').load_workbook(queue)
+            book['Fila_Geracao']['F8'] = 'REVISAO'
+            book.save(queue); book.close()
+            click('#selection-preview')
+            wait("q('selection-preview-data').textContent.includes('1 item selecionado')")
+            assert session.validate_campaign()['selection']['selected_ids'] == ['7']
+            window.evaluate_js("api=async function(path,body){if(path==='start'&&body?.real)throw Error('Real API forbidden');const result=await window.diagnosticOriginalApi(path,body);if(path==='state'){result.allow_api=true;result.api_key_status='session';}return result;};refresh()")
+            wait('state.allow_api===true')
+            click('#real-start')
+            wait("q('generation-dialog').open && q('generation-items').textContent==='Até 1'")
+            assert window.evaluate_js("q('generation-selected-ids').textContent.includes('7') && !q('generation-confirm').disabled")
+            layout('authorized-review-modal-exact-id')
+            click('#generation-cancel')
+            window.evaluate_js('api=window.diagnosticOriginalApi;refresh()')
+            wait('state.allow_api===false')
+            assert session.allow_api is False and not session.active
+            report['checks'].append('authorized-review-sheet-label-does-not-exclude-modal-id-no-api')
             report["passed"] = True
         except Exception as exc:
             report["error"] = f"{type(exc).__name__}: {exc}"
+            report['execution_ui'] = window.evaluate_js("({history:q('history-data')?.textContent,historyOptions:q('history-choice')?.innerHTML,runs:state.history?.runs?.length,selection:q('selection-preview-data')?.textContent,error:q('error')?.textContent})")
             report["ui_failure"] = window.evaluate_js("({dialogOpen:document.querySelector('#generation-dialog')?.open,error:document.querySelector('#generation-error')?.textContent,confirmDisabled:document.querySelector('#generation-confirm')?.disabled,keyStatus:state?.api_key_status,paidCalls:window.diagnosticPaidCalls})")
         finally:
             (root / "diagnostics.json").write_text(json.dumps(report, ensure_ascii=True, indent=2), "utf-8")

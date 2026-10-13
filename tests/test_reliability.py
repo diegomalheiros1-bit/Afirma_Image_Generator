@@ -213,8 +213,9 @@ class ReliabilityTests(IsolatedTest):
                 raise OSError("Disk full")
             return original(path, mode, *args, **kwargs)
         with patch.object(Path, "open", new=fail):
-            with self.assertRaises(PersistenceError):
-                self.run_queue(env={**self.env, "MAX_IMAGES_PER_RUN": "4"})
+            result = self.run_queue(env={**self.env, "MAX_IMAGES_PER_RUN": "4"})
+        self.assertEqual((result['started'], result['review']), (1, 1))
+        self.assertIn('armazenamento', result['stop_reason'])
         self.assertTrue((self.output / "1_01.png").exists())
         self.assertFalse((self.output / "1_02.png").exists())
         self.assertEqual(load_queue(self.queue).iloc[0]["Status"], "REVISAO")
@@ -250,8 +251,9 @@ class ReliabilityTests(IsolatedTest):
                 raise OSError("disk failed")
             return original(path, mode, *args, **kwargs)
         with patch.object(Path, "open", new=fail):
-            with self.assertRaisesRegex(PersistenceError, "Novas chamadas interrompidas"):
-                self.run_queue()
+            result = self.run_queue()
+        self.assertEqual(result['stop_reason'], 'Interrompido para revisão após falha local de armazenamento')
+        self.assertEqual((result['started'], result['review'], result['waiting']), (1, 1, 2))
         self.assertEqual(self.edit.call_count, 1)
         statuses = list(load_queue(self.queue)["Status"])
         self.assertEqual(statuses, ["REVISAO", "PENDENTE", "PENDENTE"])
@@ -364,7 +366,8 @@ class ReliabilityTests(IsolatedTest):
                 "import sys\ntry:\n with queue_lock(Path(sys.argv[1])): pass\n"
                 "except PersistenceError: sys.exit(7)")
         with queue_lock(self.queue):
-            result = subprocess.run([sys.executable, "-c", code, str(self.queue)], capture_output=True)
+            result = subprocess.run([sys.executable, "-c", code, str(self.queue)], capture_output=True,
+                                    cwd=Path(__file__).resolve().parents[1])
             self.assertEqual(result.returncode, 7, result.stderr)
         with queue_lock(self.queue):
             pass
@@ -406,17 +409,20 @@ class ReliabilityTests(IsolatedTest):
         self.edit.side_effect = lambda **kwargs: SimpleNamespace(data=[SimpleNamespace(
             b64_json=base64.b64encode(b"not an image").decode())])
         self.run_queue()
-        self.assertTrue((load_queue(self.queue)["Status"] == "REVISAO").all())
+        self.assertEqual(load_queue(self.queue)['Status'].tolist(), ['REVISAO', 'PENDENTE', 'PENDENTE'])
         self.assertFalse(list(self.output.glob("*.png")))
 
     def test_timeout_is_uncertain_and_not_retried(self):
         self.edit.side_effect = APITimeoutError(request=httpx.Request("POST", "https://example.test"))
-        self.run_queue()
-        self.assertEqual(self.edit.call_count, 3)
+        result = self.run_queue()
+        self.assertEqual(self.edit.call_count, 1)
+        self.assertEqual(result['stop_reason'], 'Interrompido para revisão após timeout')
         self.sleep.assert_not_called()
-        self.assertTrue((load_queue(self.queue)["Status"] == "REVISAO").all())
+        self.assertEqual(load_queue(self.queue)['Status'].tolist(), ['REVISAO', 'PENDENTE', 'PENDENTE'])
+        self.edit.side_effect = self.respond
         self.run_queue()
         self.assertEqual(self.edit.call_count, 3)
+        self.assertEqual(load_queue(self.queue).iloc[0]['Status'], 'REVISAO')
 
     def test_exhausted_retries_and_long_retry_after(self):
         self.edit.side_effect = self.api_error(RateLimitError, 429, "slow_down")
