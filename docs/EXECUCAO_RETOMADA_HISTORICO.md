@@ -1,4 +1,4 @@
-# Execução, retomada e histórico — versão 1.0.7
+# Execução, retomada e histórico — versão 1.0.8
 
 ## Selecionar o que executar
 
@@ -114,6 +114,16 @@ A média não representa previsão garantida nem cobrança confirmada.
 Durante a interrupção, não são iniciados novos itens. Uma chamada já iniciada
 pode retornar ou atingir o timeout; a aplicação aguarda e salva seu resultado.
 Não existe confirmação de cancelamento remoto.
+
+## Linha do tempo em lotes grandes
+
+Na versão 1.0.8, a tabela tem rolagem interna e cabeçalho fixo. Em duas colunas,
+o quadro direito acompanha a altura do quadro de preparação; a tabela ocupa
+o espaço restante sem ampliar a página a cada evento. Em uma coluna, sua
+altura permanece limitada. Há rolagem horizontal quando as colunas não cabem.
+O contêiner tem foco por teclado e identificação para leitores de tela.
+O diagnóstico usa 53 itens fictícios com 106 eventos e confere o último item,
+o alinhamento dos painéis, o cabeçalho e o ajuste após redimensionamento.
 
 ## Validação local e limites desta entrega
 

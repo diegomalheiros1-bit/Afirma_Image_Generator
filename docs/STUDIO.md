@@ -338,3 +338,12 @@ controles ficam bloqueados para impedir envios repetidos.
 O diagnóstico Windows verifica esse fluxo com interceptação local do início
 pago e backend com API bloqueada: ausência de chave, cancelamento, Esc,
 alteração do lote e clique repetido. Nenhum teste desse fluxo consome créditos.
+
+## Rolagem da linha do tempo — versão 1.0.8
+
+Lotes grandes mantêm seus eventos na tabela com rolagem interna e cabeçalho
+fixo. Em janelas com duas colunas, o painel de acompanhamento tem a mesma altura
+do painel de preparação. A tabela usa o espaço disponível e não cresce com a
+quantidade de linhas. Em uma coluna, sua altura é limitada a uma parte da janela.
+Os resumos continuam disponíveis e todos os itens podem ser consultados pela
+rolagem, inclusive o último. O histórico persistido e os estados não são alterados.

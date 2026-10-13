@@ -1,6 +1,6 @@
 # Afirma Image Generator
 
-**Versão atual: 1.0.7 — Afirma Image Studio para Windows.**
+**Versão atual: 1.0.8 — Afirma Image Studio para Windows.**
 
 Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
@@ -71,6 +71,13 @@ Na versão **1.0.2**, os limites de Configurações prevalecem sobre o limite do
 Excel no Studio. Por exemplo, dez itens/dez imagens selecionam até dez imagens
 mesmo com `Limite_Por_Execucao=1`, sem editar a planilha. A execução por CLI
 continua respeitando o limite do Excel.
+
+Na versão **1.0.8**, a **Linha do tempo** tem rolagem interna vertical e
+horizontal, com cabeçalho fixo. Em duas colunas, o painel de acompanhamento
+respeita a altura de **Prepare sua campanha**. A altura se ajusta quando a
+seleção muda ou a janela é redimensionada; em telas menores a tabela continua
+limitada, sem expandir a página com todos os eventos. O diagnóstico cobre
+53 itens fictícios (106 eventos), incluindo acesso ao último item.
 
 ### Escolher a execução
 
@@ -242,9 +249,9 @@ proteção de arquivos existentes e retomada sem repetir chamadas. A conferênci
 Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
 timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
 
-Validação da **versão 1.0.7 em 13/10/2026**: **161 testes automatizados passaram**,
+Validação da **versão 1.0.8 em 13/10/2026**: **161 testes automatizados passaram**,
 com conexões externas bloqueadas, fixtures temporárias e clientes simulados.
-O executável empacotado e uma extração nova do ZIP passaram em **40 verificações
+O executável empacotado e uma extração nova do ZIP passaram em **43 verificações
 de interface**, incluindo três ações sem sobreposição, retomada pelo histórico,
 tooltips por teclado, revisão liberada ainda marcada `REVISAO`, temas, zoom e
 redimensionamento. A extração foi testada sem Python no PATH e sem credenciais

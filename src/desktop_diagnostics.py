@@ -401,9 +401,50 @@ def prepare_diagnostics(root):
             wait('state.allow_api===false')
             assert session.allow_api is False and not session.active
             report['checks'].append('authorized-review-sheet-label-does-not-exclude-modal-id-no-api')
+            # Large timeline fixture: never use the user's real 53-item campaign.
+            from datetime import datetime, timezone
+            stamp=datetime.now(timezone.utc).isoformat()
+            events=[]
+            for i in range(1,54):
+                events.extend([dict(type='item_start',id=str(i),at=stamp),dict(type='item_end',id=str(i),at=stamp,
+                    status='SIMULADO',elapsed_seconds=140,message='Registro fictício; nenhuma chamada à API.',
+                    outputs=[str(root/'fictional-output'/f'produto-{i}.png')],api_attempts=0)])
+            session.run_log=dict(version=2,run_id='timeline-fixture',started_at=stamp,finished_at=stamp,
+                mode='simulation',status='Finalizado',planned_items=53,planned_images=53,elapsed_seconds=7466,
+                mean_completed_seconds=140,events=events,counts=dict(planned=53,started=53,completed=53,errors=0,review=0,waiting=0))
+            session.items=[dict(id=str(i),status='SIMULADO',message='Somente fixture') for i in range(1,54)]
+            session.result=dict(success=53,processed=53,errors=0)
+            session.total=53
+            window.resize(1440,900)
+            wait("innerWidth>1300 && q('run-history').querySelectorAll('tbody tr').length===106")
+            wait("Math.abs(q('campaign-follow').getBoundingClientRect().bottom-q('campaign-setup').getBoundingClientRect().bottom)<2")
+            window.evaluate_js("q('run-history').scrollIntoView({block:'center'});q('run-history').querySelector('.log-table-wrap').focus()")
+            assert window.evaluate_js("(()=>{const e=q('run-history').querySelector('.log-table-wrap');return e.scrollHeight>e.clientHeight && e.clientHeight>=139;})()")
+            window.evaluate_js("const timeline=q('run-history').querySelector('.log-table-wrap');timeline.scrollTop=timeline.scrollHeight")
+            assert window.evaluate_js("q('run-history').querySelector('.log-table-wrap').scrollTop>0")
+            assert window.evaluate_js("(()=>{const e=q('run-history').querySelector('.log-table-wrap');return Math.abs(e.querySelector('th').getBoundingClientRect().top-e.getBoundingClientRect().top)<4;})()")
+            layout('timeline-53-wide-last-item')
+            window.resize(520,500)
+            wait('innerWidth<520')
+            window.evaluate_js("q('run-history').querySelector('.log-table-wrap').scrollTop=0;q('run-history').querySelector('.log-table-wrap').scrollIntoView({block:'start'})")
+            assert window.evaluate_js("(()=>{const e=q('run-history').querySelector('.log-table-wrap');return e.scrollHeight>e.clientHeight && e.clientHeight<=innerHeight*.6+2;})()")
+            layout('timeline-53-small-scroll')
+            window.resize(1440,900)
+            wait('innerWidth>1300')
+            window.evaluate_js("q('history-panel').open=false")
+            wait("q('run-history').getBoundingClientRect().height===0")
+            window.evaluate_js("q('history-panel').open=true;q('campaign-setup').style.paddingBottom='120px'")
+            wait("Math.abs(q('campaign-follow').getBoundingClientRect().bottom-q('campaign-setup').getBoundingClientRect().bottom)<2")
+            window.evaluate_js("q('campaign-setup').style.paddingBottom='';q('run-history').scrollIntoView({block:'center'})")
+            layout('timeline-53-wide-restored')
+            assert session.allow_api is False and not session.active
+            report['checks'].append('timeline-53-internal-scroll-sticky-header-panel-alignment-small-and-resize')
             report["passed"] = True
         except Exception as exc:
             report["error"] = f"{type(exc).__name__}: {exc}"
+            import traceback
+            report['failure_line'] = traceback.extract_tb(exc.__traceback__)[-1].lineno
+            report['timeline_layout'] = window.evaluate_js("(()=>{const e=q('run-history')?.querySelector('.log-table-wrap');return {width:innerWidth,height:innerHeight,left:q('campaign-setup')?.getBoundingClientRect().height,right:q('campaign-follow')?.getBoundingClientRect().height,tableHeight:e?.clientHeight,tableScroll:e?.scrollHeight,scrollTop:e?.scrollTop,tableTop:e?.getBoundingClientRect().top,headerTop:e?.querySelector('th').getBoundingClientRect().top};})()")
             report['execution_ui'] = window.evaluate_js("({history:q('history-data')?.textContent,historyOptions:q('history-choice')?.innerHTML,runs:state.history?.runs?.length,selection:q('selection-preview-data')?.textContent,error:q('error')?.textContent})")
             report["ui_failure"] = window.evaluate_js("({dialogOpen:document.querySelector('#generation-dialog')?.open,error:document.querySelector('#generation-error')?.textContent,confirmDisabled:document.querySelector('#generation-confirm')?.disabled,keyStatus:state?.api_key_status,paidCalls:window.diagnosticPaidCalls})")
         finally:
