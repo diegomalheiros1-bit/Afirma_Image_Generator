@@ -342,23 +342,38 @@ class StudioSession:
     def set_api_key(self, key, *, persist=False):
         with self.lock:
             self.idle()
+            if self._api_connection["status"] == "checking":
+                raise ValueError("Aguarde a verificação terminar antes de alterar a chave.")
             if type(key) is not str or type(persist) is not bool:
                 raise ValueError("Informe uma chave válida.")
             key = key.strip()
             if not 20 <= len(key) <= 512 or any(character.isspace() or ord(character) < 32 for character in key):
                 raise ValueError("Informe uma chave de API válida, sem espaços.")
             if persist:
-                self.credential_store.save(key)
+                try:
+                    self.credential_store.save(key)
+                except OSError:
+                    raise ValueError("Não foi possível salvar a chave protegida. A chave anterior foi mantida.") from None
                 self._session_api_key = None
             else:
                 self._session_api_key = key
             self._reset_api_connection()
 
-    def clear_api_key(self):
+    def clear_api_key(self, source=None):
         with self.lock:
             self.idle()
-            self.credential_store.clear()
-            self._session_api_key = None
+            if self._api_connection["status"] == "checking":
+                raise ValueError("Aguarde a verificação terminar antes de alterar a chave.")
+            source = source or self.api_key_status()
+            if source == "saved":
+                try:
+                    self.credential_store.clear()
+                except OSError:
+                    raise ValueError("Não foi possível remover a chave salva. Tente novamente.") from None
+            elif source == "session":
+                self._session_api_key = None
+            else:
+                raise ValueError("A configuração externa é gerenciada fora do Studio.")
             self._reset_api_connection()
 
     def resolve_api_key(self, external=None):

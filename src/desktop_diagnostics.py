@@ -30,6 +30,17 @@ def prepare_diagnostics(root):
     book.save(queue)
     book.close()
     import openai
+    import socket
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    def guard(method):
+        def connect(instance, address):
+            if not isinstance(address, tuple) or address[0] not in {'127.0.0.1', 'localhost', '::1'}:
+                raise AssertionError('External network forbidden in diagnostics')
+            return method(instance, address)
+        return connect
+    socket.socket.connect = guard(original_connect)
+    socket.socket.connect_ex = guard(original_connect_ex)
     def forbidden_client(*args, **kwargs):
         raise AssertionError('Network API client forbidden in diagnostics')
     openai.OpenAI = forbidden_client
@@ -164,6 +175,99 @@ def prepare_diagnostics(root):
             layout("settings-wide-dark")
             window.evaluate_js("document.querySelector('.credential-card').scrollIntoView({block:'center'})")
             layout("api-key-wide-dark")
+            # Credential state flow, entirely fictional and local. DPAPI is real,
+            # provider probes are fakes and the external network is blocked.
+            from unittest.mock import patch
+            import threading
+            fake_key = 'fictional-diagnostic-credential-only'
+            def type_key():
+                window.evaluate_js("q('api-key').value='fictional-diagnostic-credential-only';q('api-key').dispatchEvent(new Event('input',{bubbles:true}))")
+            def card_layout(name):
+                window.evaluate_js("document.querySelector('.credential-card').scrollIntoView({block:'start'})")
+                layout(name)
+            with patch('src.api_connection.check_api_connection') as probe:
+                type_key()
+                click('#api-key-save')
+                wait("state.api_key_status==='saved' && q('credential-form').classList.contains('hidden')")
+                assert session.resolve_api_key() == fake_key
+                assert fake_key not in json.dumps(session.state())
+                assert fake_key.encode() not in session.credential_store.path.read_bytes()
+                reopened = StudioSession(session.settings_path, env={})
+                assert reopened.resolve_api_key() == fake_key
+                assert reopened.state()['api_connection']['status'] == 'unverified'
+                assert window.evaluate_js("q('api-key').value==='' && q('api-key').type==='password'")
+                card_layout('credential-saved-wide-dark')
+                click('#api-key-change')
+                wait("document.activeElement.id==='api-key'")
+                type_key()
+                click('#api-key-toggle')
+                assert window.evaluate_js("q('api-key').type==='text'")
+                click('#api-key-cancel')
+                assert window.evaluate_js("document.activeElement.id==='api-key-change' && q('api-key').value==='' && q('api-key').type==='password'")
+                click('#api-key-change')
+                type_key()
+                with patch.object(session.credential_store, 'save', side_effect=OSError(fake_key)):
+                    click('#api-key-save')
+                    wait("q('api-key-error').textContent.includes('anterior')")
+                assert session.resolve_api_key() == fake_key
+                assert window.evaluate_js("q('api-key').value===''")
+                assert fake_key not in window.evaluate_js('document.body.innerText')
+                card_layout('credential-storage-failure-dark')
+                click('#api-key-cancel')
+                probe.assert_not_called()
+            finish = threading.Event()
+            def fake_probe(key):
+                assert key == fake_key
+                finish.wait(10)
+                return dict(status='connected', message='Autenticação fictícia confirmada.')
+            with patch('src.api_connection.check_api_connection', side_effect=fake_probe) as probe:
+                click('#api-key-check')
+                wait("state.api_connection.status==='checking'")
+                assert window.evaluate_js("q('api-key-check').disabled && q('api-key-change').disabled && q('api-key-clear').disabled")
+                session.verify_api_key()
+                assert probe.call_count == 1
+                card_layout('credential-checking-dark')
+                finish.set()
+                wait("state.api_connection.status==='connected'")
+            click('#theme-toggle')
+            card_layout('credential-verified-wide-light')
+            window.resize(520, 600)
+            wait('innerWidth < 520')
+            card_layout('credential-saved-small-light')
+            click('#api-key-change')
+            card_layout('credential-replacement-small-light')
+            type_key()
+            click('#api-key-session')
+            wait("state.api_key_status==='session' && state.api_connection.status==='unverified'")
+            card_layout('credential-session-small-light')
+            # Test actual scoped HTTP removal without an interactive native prompt.
+            window.evaluate_js("window.originalCredentialConfirm=window.confirm;window.confirm=()=>true")
+            click('#api-key-clear')
+            wait("state.api_key_status==='saved'")
+            assert 'salva' in window.evaluate_js("q('credential-notice').textContent")
+            session._external_api_key_available = True
+            session.env = {'OPENAI_API_KEY': 'fictional-external-diagnostic-only'}
+            click('#api-key-clear')
+            wait("state.api_key_status==='external'")
+            assert window.evaluate_js("q('api-key-clear').classList.contains('hidden')")
+            card_layout('credential-external-small-light')
+            click('#api-key-change')
+            type_key()
+            click('#back')
+            assert window.evaluate_js("q('api-key').value===''")
+            click('#settings-button')
+            assert window.evaluate_js("q('credential-form').classList.contains('hidden')")
+            session._external_api_key_available = False
+            session.env = {}
+            window.evaluate_js("window.confirm=window.originalCredentialConfirm;refresh()")
+            wait("state.api_key_status==='missing'")
+            assert window.evaluate_js("!q('credential-form').classList.contains('hidden')")
+            card_layout('credential-missing-small-light')
+            assert session.connection_worker is None or not session.connection_worker.is_alive()
+            report['checks'].append('credential-lifecycle-no-network-dpapi-reopen-focus-removal-fallback')
+            click('#theme-toggle')
+            window.resize(1200, 800)
+            wait('innerWidth > 1100')
             from src.desktop_app import on_ui_thread
             for factor in (1.25, 1.5):
                 on_ui_thread(window, lambda: setattr(window.native.browser.webview, 'ZoomFactor', factor))

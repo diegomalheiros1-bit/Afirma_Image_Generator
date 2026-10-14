@@ -506,7 +506,7 @@ class StudioTests(IsolatedTest):
                                  token=server.session_token)[0], 403)
         with patch('src.api_connection.check_api_connection', return_value=dict(status='connected', message='OK')):
             status, body = request('/api/credential', {'key': dummy_key}, token=server.session_token)
-            self.session.connection_worker.join(3)
+            self.assertIsNone(self.session.connection_worker)
         self.assertEqual(status, 200)
         self.assertNotIn(dummy_key.encode(), body)
         status, body = request('/api/state', token=server.session_token)

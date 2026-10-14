@@ -48,7 +48,7 @@ reorganizam em janelas menores. A tabela de eventos mantém rolagem horizontal
 dentro da tabela para preservar as colunas; o restante da tela rola verticalmente.
 
 Preferências, chave protegida pelo usuário do Windows, logs e cache ficam em
-`%LOCALAPPDATA%\Afirma Image Studio`. O campo da chave permanece vazio ao reabrir;
+`%LOCALAPPDATA%\Afirma Image Studio`. O campo da chave fica oculto quando existe credencial, até escolher Trocar chave;
 o status informa se existe credencial salva, da sessão ou do ambiente. A pasta
 do pacote pode ficar em local sem permissão de escrita.
 

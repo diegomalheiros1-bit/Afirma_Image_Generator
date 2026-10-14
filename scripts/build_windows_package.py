@@ -84,7 +84,8 @@ def main():
         'Conexão com a internet é necessária para verificar a chave e gerar imagens.\n\n'
         'DADOS\nPreferências, chave protegida, logs e cache ficam em:\n'
         r'%LOCALAPPDATA%\Afirma Image Studio' '\n'
-        'O campo da chave permanece vazio ao reabrir para não expor a credencial.\n'
+        'A chave configurada aparece em resumo; use Trocar chave para inserir outra.\n'
+        'Salvar a chave não verifica conexão; use Verificar conexão explicitamente.\n'
         'Histórico e planilhas permanecem nas pastas escolhidas para a campanha.\n'
         'O pacote não inclui chave, planilha ou imagens reais.\n'
         'O processamento local usa somente 127.0.0.1; não altera o Firewall.\n\n'
@@ -96,11 +97,13 @@ def main():
         encoding='utf-8')
     guide = ROOT / 'docs' / 'EXECUCAO_RETOMADA_HISTORICO.md'
     (destination / guide.name).write_text(guide.read_text('utf-8'), encoding='utf-8')
+    credentials_guide = ROOT / 'docs' / 'CREDENCIAIS.md'
+    (destination / credentials_guide.name).write_text(credentials_guide.read_text('utf-8'), encoding='utf-8')
     files = package_files(destination)
     # Exercise the actual frozen .exe, WebView2 renderer and UI in isolated data.
     verification = release / 'verification'
     subprocess.run([str(executable), '--self-test', str(verification)],
-                   cwd=release, check=True, timeout=120)
+                   cwd=release, check=True, timeout=180)
     diagnostics = json.loads((verification / 'diagnostics.json').read_text('utf-8'))
     if not diagnostics.get('passed'):
         raise RuntimeError('O diagnóstico nativo falhou; ZIP não gerado.')
@@ -111,7 +114,7 @@ def main():
             package.write(path, path.relative_to(release))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (release / 'SHA256.txt').write_text(f'{digest}  {archive.name}\n', encoding='ascii')
-    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide,
+    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide, credentials_guide,
                     *sorted((ROOT / 'src').glob('*.py')), ROOT / 'requirements-desktop.txt',
                     ROOT / 'requirements-build-windows.txt', Path(__file__).resolve()]
     info = {

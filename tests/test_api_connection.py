@@ -125,6 +125,9 @@ class ConnectionTests(IsolatedTest):
                     self.session.verify_api_key()
                     self.assertTrue(started.wait(2))
                     old_worker = self.session.connection_worker
+                    # Simulate a superseded probe (normal UI/backend mutations
+                    # are blocked while checking); revision remains defense in depth.
+                    self.session._reset_api_connection()
                     if remove:
                         self.session.clear_api_key()
                     else:
@@ -151,7 +154,7 @@ class ConnectionTests(IsolatedTest):
             self.session.verify_api_key()
         probe.assert_not_called()
 
-    def test_http_save_starts_probe_and_explicit_check_requires_local_auth(self):
+    def test_http_save_never_probes_and_explicit_check_requires_local_auth(self):
         server = make_server(self.session)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -176,11 +179,54 @@ class ConnectionTests(IsolatedTest):
             self.assertEqual(request('/api/credential/check', {}, origin='https://untrusted.invalid')[0], 403)
             probe.assert_not_called()
             self.assertEqual(request('/api/credential', {'key': KEY})[0], 200)
-            self.session.connection_worker.join(3)
-            self.assertEqual(self.session.state()['api_connection']['status'], 'connected')
+            self.assertIsNone(self.session.connection_worker)
+            probe.assert_not_called()
+            self.assertEqual(self.session.state()['api_connection']['status'], 'unverified')
             self.assertEqual(request('/api/credential/check', {})[0], 200)
             self.session.connection_worker.join(3)
-            self.assertEqual(probe.call_count, 2)
+            self.assertEqual(probe.call_count, 1)
+
+    def test_replacement_failure_preserves_key_and_verification_without_leaking(self):
+        self.session.set_api_key(KEY)
+        with patch('src.api_connection.check_api_connection', return_value=dict(status='connected', message='OK')):
+            self.session.verify_api_key()
+            self.session.connection_worker.join(3)
+        with patch.object(self.session.credential_store, 'save', side_effect=OSError(KEY)):
+            with self.assertRaises(ValueError) as raised:
+                self.session.set_api_key('fictional-replacement-value-only', persist=True)
+        self.assertNotIn(KEY, str(raised.exception))
+        self.assertEqual(self.session.resolve_api_key(), KEY)
+        self.assertEqual(self.session.state()['api_connection']['status'], 'connected')
+        self.session.set_api_key('fictional-replacement-value-only')
+        self.assertEqual(self.session.state()['api_connection']['status'], 'unverified')
+
+    def test_removal_is_scoped_and_reveals_lower_priority(self):
+        self.session._external_api_key_available = True
+        self.session.set_api_key(KEY, persist=True)
+        self.session.set_api_key('fictional-session-value-only')
+        self.session.clear_api_key('session')
+        self.assertEqual(self.session.api_key_status(), 'saved')
+        self.assertEqual(self.session.resolve_api_key(), KEY)
+        self.session.set_api_key('fictional-session-value-only')
+        self.session.clear_api_key('saved')
+        self.assertEqual(self.session.api_key_status(), 'session')
+        self.session.clear_api_key('session')
+        self.assertEqual(self.session.api_key_status(), 'external')
+        with self.assertRaises(ValueError):
+            self.session.clear_api_key('external')
+        self.session._external_api_key_available = False
+        self.assertEqual(self.session.api_key_status(), 'missing')
+
+    def test_mutations_blocked_while_checking_or_running(self):
+        self.session.set_api_key(KEY)
+        for active, status in ((True, 'unverified'), (False, 'checking')):
+            self.session.active = active
+            self.session._api_connection['status'] = status
+            with self.assertRaises(ValueError):
+                self.session.set_api_key('fictional-replacement-value-only')
+            with self.assertRaises(ValueError):
+                self.session.clear_api_key('session')
+            self.assertEqual(self.session.resolve_api_key(), KEY)
 
     def test_lan_cannot_trigger_credential_probe(self):
         from http.server import ThreadingHTTPServer

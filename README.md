@@ -1,6 +1,6 @@
 # Afirma Image Generator
 
-**Versão atual: 1.0.8 — Afirma Image Studio para Windows.**
+**Versão atual: 1.0.9 — Afirma Image Studio para Windows.**
 
 Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
@@ -210,14 +210,15 @@ ações existentes de aplicar ou salvar. Os links externos abrem no navegador.
 - Resolução: automática, três tamanhos predefinidos ou dimensões personalizadas validadas.
 - Compressão: opcional, de 0 a 100%, somente para JPEG/WebP, separada da qualidade de geração.
 - Pasta de saída, timeout, novas tentativas, limites de jobs/imagens e modo seguro.
-- Em **Opções avançadas**, chave da API para esta sessão ou salva protegida no
-  usuário atual do Windows; o campo não mostra uma chave armazenada ao reabrir.
-- Ao clicar em **Usar e verificar** ou salvar a chave, o Studio verifica a
-  autenticação em segundo plano. O cartão mostra ícone verde para **Conectada**,
-  vermelho para **Não conectada**, andamento e horário da última verificação.
-  **Verificar conexão** repete a checagem da chave configurada, inclusive do `.env`.
-  A consulta não gera imagens; confirma autenticação, sem garantir saldo ou
-  permissão para gerar imagens. O resultado fica somente na sessão.
+- Em **Opções avançadas**, uma chave configurada aparece como resumo da origem
+  (sessão, salva no computador ou externa). O campo fica oculto até **Trocar chave**.
+- Sem chave, escolha **Usar nesta sessão** ou **Salvar protegida neste computador**.
+  Salvar não faz chamadas externas. **Verificar conexão** é uma ação explícita;
+  o resultado não comprova saldo ou acesso à geração e fica somente na sessão.
+- Cancelar a troca limpa o novo texto; falha de armazenamento preserva a chave
+  anterior. Remover a chave salva ou descartar a da sessão afeta apenas essa origem.
+  Quando existe uma alternativa, o resumo informa qual passou a ser usada.
+- Salvar preferências não salva chaves. Consulte [o fluxo de credenciais](docs/CREDENCIAIS.md).
 
 Preferências podem ser aplicadas à sessão ou salvas em `.studio-settings.json`,
 sem credenciais. Os padrões vêm do ambiente sobre o `.env`; preferências salvas
@@ -249,9 +250,9 @@ proteção de arquivos existentes e retomada sem repetir chamadas. A conferênci
 Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
 timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
 
-Validação da **versão 1.0.8 em 13/10/2026**: **161 testes automatizados passaram**,
+Validação da **versão 1.0.9 em 13/10/2026**: **164 testes automatizados passaram**,
 com conexões externas bloqueadas, fixtures temporárias e clientes simulados.
-O executável empacotado e uma extração nova do ZIP passaram em **43 verificações
+O executável empacotado e uma extração nova do ZIP passaram em **52 verificações
 de interface**, incluindo três ações sem sobreposição, retomada pelo histórico,
 tooltips por teclado, revisão liberada ainda marcada `REVISAO`, temas, zoom e
 redimensionamento. A extração foi testada sem Python no PATH e sem credenciais

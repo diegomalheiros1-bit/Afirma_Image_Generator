@@ -108,14 +108,13 @@ Não é necessário salvar o cadastro para simular ou gerar nesta sessão.
 
 ## Parâmetros de imagem
 
-Em **Configurações > Opções avançadas**, informe sua chave e clique em
-**Usar e verificar** ou **Salvar protegida neste computador**. A conexão é
-conferida automaticamente em segundo plano, com indicador de andamento,
-ícone verde quando confirmada e vermelho quando não conectada. A mensagem
-distingue autenticação recusada, falta de permissão, limites, timeout e falha de
-rede. **Verificar conexão** repete a consulta da chave configurada, inclusive
-quando ela vem do `.env` ou do ambiente. Durante uma campanha, a checagem fica
-indisponível.
+Em **Configurações > Opções avançadas**, o resumo informa a origem da chave
+efetivamente configurada. O formulário fica oculto até **Trocar chave**. Sem chave,
+ele aparece para cadastro. **Usar nesta sessão** e **Salvar protegida neste computador**
+configuram a credencial sem chamadas externas. **Verificar conexão** é explícito e
+mostra andamento, autenticação verificada ou uma falha compreensível.
+Ações de alteração ficam bloqueadas durante geração ou verificação.
+Veja [Credenciais](CREDENCIAIS.md) para prioridade, troca, remoção e testes.
 
 A verificação faz somente `GET https://api.openai.com/v1/models`, com timeout de
 10 segundos e sem novas tentativas automáticas. Não envia prompts, referências

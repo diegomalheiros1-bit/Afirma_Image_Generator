@@ -15,6 +15,11 @@ def main(argv=None):
     parser.add_argument("--simulation-only", action="store_true", help="Bloqueia a geração paga nesta sessão.")
     parser.add_argument("--self-test", type=Path, metavar="PASTA", help="Executa diagnóstico isolado, sem chave ou API, e fecha a janela.")
     args = parser.parse_args(argv)
+    if args.self_test:
+        # A diagnostic process never inherits API credentials from its caller.
+        for name in tuple(os.environ):
+            if name.startswith(('OPENAI_', 'AZURE_OPENAI_')):
+                os.environ.pop(name, None)
     if os.name != "nt":
         raise RuntimeError("A janela nativa requer Windows.")
     data_dir = args.self_test.resolve() if args.self_test else user_data_dir()
