@@ -60,7 +60,7 @@ class ConnectionTests(IsolatedTest):
             with self.subTest(status=status):
                 result = self.probe(httpx.Response(status, json={'error': {
                     'message': KEY + ' secret response', 'type': 'test', 'code': 'test'}}))
-                self.assertEqual(result['status'], 'disconnected')
+                self.assertEqual(result['status'], 'disconnected' if status == 401 else 'unverified')
                 self.assertIn(message, result['message'])
 
     def test_timeout_and_network_errors_do_not_mark_key_invalid_or_retry(self):

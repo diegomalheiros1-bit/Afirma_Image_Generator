@@ -1,6 +1,7 @@
 """Read-only, evidence-based selection shared by preview and execution."""
 from src.job_values import canonical_id, cell_text, parse_quantity, ambiguous_legacy_key
 from src.execution_state import execution_identity, row_fingerprint, ROW_FINGERPRINT_VERSION
+from pathlib import Path
 
 MODES = {'pending', 'errors', 'pending_errors', 'resume', 'review'}
 
@@ -58,8 +59,19 @@ def plan_selection(frame, records, config, max_items, max_images, mode='pending'
                         job = make_job(row, config, True)
                         OpenAIImageGenerator.validate(job)
                         current, _ = execution_identity(job, row)
-                        old_settings = record.get('execution', {}).get('settings')
-                        eligible = bool(old_settings) and current['settings'] != old_settings
+                        previous = record.get('execution', {})
+                        old_settings = previous.get('settings')
+                        if diagnostic.get('api_code') == 'moderation_blocked':
+                            # Explicit error selection allows another confirmed
+                            # rejection attempt, even with unchanged content.
+                            # This does not authorize a call or mutate the journal.
+                            old_outputs = previous.get('outputs', [])
+                            eligible = (isinstance(old_outputs, list)
+                                and all(isinstance(p, str) and p for p in old_outputs)
+                                and all(not Path(p).exists() and not Path(p).is_symlink() for p in old_outputs)
+                                and all(not p.exists() and not p.is_symlink() for p in job.saidas))
+                        else:
+                            eligible = bool(old_settings) and current['settings'] != old_settings
                     except (ValueError, OSError):
                         pass
             category, reason = 'error', 'Erro confirmado: causa ainda não comprovadamente corrigida'

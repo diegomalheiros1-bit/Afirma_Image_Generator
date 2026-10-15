@@ -55,3 +55,8 @@ O build executa o mesmo diagnóstico no executável antes de criar o ZIP.
 
 Esta entrega é local para revisão: sem push/publicação, troca da instalação ou
 chamadas reais de autenticação e geração.
+
+
+Na versão 1.0.10, a Home também mostra o resultado da verificação explícita.
+Limite de requisições, permissão ou falha inconclusiva do provedor usam estado
+não verificado, sem afirmar desconexão. Veja [Botões e conexão](BOTOES_E_CONEXAO.md).

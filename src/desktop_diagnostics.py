@@ -46,8 +46,9 @@ def prepare_diagnostics(root):
     openai.OpenAI = forbidden_client
     session = StudioSession(root / "diagnostic-settings.json", allow_api=False, env={})
     values = deepcopy(session.preferences)
-    values.update(max_jobs=10, max_images=10, safe_mode=False)
+    values.update(output_dir=str(root / "images"), max_jobs=10, max_images=10, safe_mode=False)
     session.set_preferences(values)
+    session.set_folders([{'alias': 'Produtos', 'path': str(root)}], 'Produtos')
 
     def ready(app):
         window = app.window
@@ -107,6 +108,12 @@ def prepare_diagnostics(root):
             assert report['app_version'] == APP_VERSION
             assert window.evaluate_js('state.app_mode') == 'desktop'
             assert window.evaluate_js("q('history-data').textContent.includes('Nenhuma execução')")
+            assert window.evaluate_js("!q('persistent-history').open")
+            click('#history-heading')
+            assert window.evaluate_js("q('persistent-history').open")
+            window.evaluate_js("q('persistent-history').scrollIntoView({block:'center'})")
+            layout('history-empty-expanded')
+            click('#history-heading')
             layout('empty-campaign-history')
             app.pick_files = lambda kind: {"queue": [str(queue)], "photos": [str(reference)], "folder": [str(root / 'images')]}[kind]
             click("#choose-queue")
@@ -395,6 +402,73 @@ def prepare_diagnostics(root):
             assert window.evaluate_js("[0,59,60,61,119,120,3600,59.5,null].map(formatDuration).join('|')") == '0 s|59 s|1 min|1 min 1 s|1 min 59 s|2 min|1 h|1 min|—'
             assert window.evaluate_js("[59.4,119.5,3920,undefined,NaN,Infinity,-1].map(formatDuration).join('|')") == '59 s|2 min|1 h 5 min 20 s|—|—|—|—'
             report['checks'].append('shared-duration-boundaries-real-gate-blocked')
+            # Disclosure regressions: only fixture files and existing state requests.
+            assert window.evaluate_js("!q('persistent-history').open")
+            window.evaluate_js("window.historyNode=q('history-data').firstChild;window.historyPanel=q('persistent-history');window.historyApi=api;window.historyCalls=[];api=async(...args)=>{historyCalls.push(args[0]);return historyApi(...args)}")
+            for theme in ('light', 'dark'):
+                window.evaluate_js(f"document.documentElement.dataset.theme='{theme}';themeLabel();q('persistent-history').open=false;q('persistent-history').scrollIntoView({{block:'center'}})")
+                layout(f'history-collapsed-{theme}')
+                click('#history-heading')
+                assert window.evaluate_js("q('persistent-history').open")
+                layout(f'history-expanded-{theme}')
+            time.sleep(1.2)
+            assert window.evaluate_js("q('persistent-history').open && historyPanel===q('persistent-history') && historyNode===q('history-data').firstChild")
+            assert window.evaluate_js("historyCalls.every(x=>x==='state')")
+            window.evaluate_js("api=historyApi;document.documentElement.dataset.theme='light';themeLabel()")
+            window.maximize()
+            time.sleep(.3)
+            for theme in ('light', 'dark'):
+                for expanded in (False, True):
+                    window.evaluate_js(f"document.documentElement.dataset.theme='{theme}';themeLabel();q('persistent-history').open={str(expanded).lower()};q('persistent-history').scrollIntoView({{block:'center'}})")
+                    layout(f'history-maximized-{theme}-{"expanded" if expanded else "collapsed"}')
+            window.restore()
+            window.resize(520,800)
+            wait('innerWidth<600')
+            window.evaluate_js("document.documentElement.dataset.theme='light';themeLabel();q('history-heading').scrollIntoView({block:'center'})")
+            # Real keyboard events delivered to this diagnostic WebView2 only.
+            from System import Action
+            def key(key, code, vk):
+                for event_type in ('keyDown', 'keyUp'):
+                    params=json.dumps(dict(type=event_type, key=key, code=code, windowsVirtualKeyCode=vk,
+                        text=('\r' if key=='Enter' else ' ' if key==' ' else '') if event_type=='keyDown' else ''))
+                    task={}
+                    def send():
+                        task['value']=window.native.browser.webview.CoreWebView2.CallDevToolsProtocolMethodAsync('Input.dispatchKeyEvent',params)
+                    window.native.Invoke(Action(send))
+                    task['value'].GetAwaiter().GetResult()
+            window.evaluate_js("q('history-heading').focus()")
+            key('Enter','Enter',13)
+            wait("!q('persistent-history').open")
+            key(' ','Space',32)
+            wait("q('persistent-history').open")
+            key('Tab','Tab',9)
+            assert window.evaluate_js("document.activeElement===q('history-choice')")
+            # Same-data polling retains both the DOM and user disclosure state.
+            window.evaluate_js("q('persistent-history').open=false")
+            time.sleep(1.2)
+            assert window.evaluate_js("!q('persistent-history').open")
+            # Use a second temporary workbook through the actual session API.
+            from shutil import copyfile
+            second_queue=root/'second-campaign.xlsx'
+            copyfile(queue,second_queue)
+            session.choose_queue(second_queue)
+            wait("state.queue.endsWith('second-campaign.xlsx')")
+            assert window.evaluate_js("!q('persistent-history').open && q('history-data').textContent.includes('Nenhuma')")
+            click('#history-heading')
+            session.choose_queue(queue)
+            wait("state.queue.endsWith('diagnostic-campaign.xlsx')")
+            assert window.evaluate_js("!q('persistent-history').open")
+            click('#history-heading')
+            # Multiple-run fixture rendered without creating or altering stored runs.
+            window.evaluate_js("window.savedHistory=structuredClone(state.history);const extra=structuredClone(state.history.runs[0]);extra.run_id='fixture-older-run';extra.status='Fixture anterior';state.history.runs.push(extra);renderPersistentHistory();q('history-choice').value='fixture-older-run';q('history-choice').dispatchEvent(new Event('change'));document.querySelector('#history-data details').open=true;window.selectedHistoryNode=q('history-data').firstChild;renderPersistentHistory()")
+            assert window.evaluate_js("q('history-choice').value==='fixture-older-run' && q('history-data').textContent.includes('Fixture anterior') && document.querySelector('#history-data details').open && selectedHistoryNode===q('history-data').firstChild && q('persistent-history').open")
+            window.evaluate_js("state.history.runs[0].status='Fixture atualizada';renderPersistentHistory()")
+            assert window.evaluate_js("selectedHistoryNode===q('history-data').firstChild && document.querySelector('#history-data details').open")
+            window.evaluate_js("state.history.runs[1].status='Fixture anterior atualizada';renderPersistentHistory()")
+            assert window.evaluate_js("document.querySelector('#history-data details').open && q('persistent-history').open && q('history-choice').value==='fixture-older-run'")
+            layout('history-multiple-runs')
+            window.evaluate_js("state.history=savedHistory;renderPersistentHistory();q('history-heading').focus()")
+            report['checks'].append('history-native-disclosure-keyboard-polling-dom-preserved-queue-reset-empty-multiple-runs-no-extra-api')
             window.evaluate_js("q('persistent-history').scrollIntoView({block:'start'})")
             wait("q('history-data').textContent.includes('Simulado') || q('history-data').textContent.includes('Itens planejados')")
             layout('persistent-history-small')
@@ -419,7 +493,11 @@ def prepare_diagnostics(root):
             assert window.evaluate_js("[...q('execution-selection').options].map(o=>o.textContent).join('|')")=='Gerar pendentes|Repetir erros|Repetir itens em revisão'
             assert window.evaluate_js("q('execution-choice').classList.contains('hidden') && !q('resume-options').classList.contains('hidden')")
             layout('resume-from-history-small')
-            window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').scrollIntoView({block:'center'});[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').focus()")
+            window.evaluate_js("document.activeElement?.blur();[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').scrollIntoView({block:'center'})")
+            # Allow scrolling/layout to finish before a fresh keyboard focus.
+            # Focusing an already focused button after click does not emit focusin.
+            time.sleep(.25)
+            window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').focus({preventScroll:true})")
             wait("!q('action-tooltip').classList.contains('hidden') && q('action-tooltip').textContent.includes('execução original')")
             layout('history-resume-tooltip')
             click('#resume-exit')
@@ -543,11 +621,194 @@ def prepare_diagnostics(root):
             layout('timeline-53-wide-restored')
             assert session.allow_api is False and not session.active
             report['checks'].append('timeline-53-internal-scroll-sticky-header-panel-alignment-small-and-resize')
+            # Fluid workspace with the large timeline still present. Inspect
+            # native client dimensions, not merely the requested outer size.
+            report['responsive_sizes'] = []
+            for requested in (520,768,1024,1366,1920,2560):
+                window.resize(requested,900)
+                time.sleep(.25)
+                actual=window.evaluate_js('innerWidth')
+                report['responsive_sizes'].append(dict(requested=requested,actual=actual,
+                    limited_by_display=actual<requested-40))
+                for theme in ('light','dark'):
+                    window.evaluate_js("document.documentElement.dataset.theme="+json.dumps(theme)+";themeLabel();window.scrollTo(0,0)")
+                    wait("(()=>{const l=q('campaign-setup').getBoundingClientRect(),r=q('campaign-follow').getBoundingClientRect();return innerWidth<=1100||Math.abs(l.bottom-r.bottom)<2})()")
+                    bounds=window.evaluate_js("(()=>{const ids=['afirma-simples','main-content','campaign-grid','persistent-history'];return Object.fromEntries(ids.map(id=>{const r=q(id).getBoundingClientRect();return [id,{left:r.left,right:r.right,width:r.width}]}));})()")
+                    root_bounds=bounds['afirma-simples']
+                    if actual>=1800:
+                        assert 24<=root_bounds['left']<=(40 if actual<=2000 else 48), bounds
+                        assert root_bounds['width']>=actual*.94,bounds
+                    for id in ('main-content','campaign-grid','persistent-history'):
+                        assert abs(bounds[id]['left']-root_bounds['left'])<2,bounds
+                        assert abs(bounds[id]['right']-root_bounds['right'])<2,bounds
+                    layout(f'fluid-home-{requested}-{theme}')
+                    window.evaluate_js("q('run-history').querySelector('.log-table-wrap').scrollIntoView({block:'start'})")
+                    assert window.evaluate_js("(()=>{const e=q('run-history').querySelector('.log-table-wrap');return e.clientHeight>0 && e.scrollHeight>e.clientHeight})()")
+                    layout(f'fluid-timeline-{requested}-{theme}')
+                click('#settings-button')
+                assert window.evaluate_js("q('settings').querySelector('.settings-panel').getBoundingClientRect().width<=1041")
+                window.evaluate_js('window.scrollTo(0,0)')
+                layout(f'fluid-settings-{requested}')
+                click('#back')
+            window.resize(1920,1080)
+            time.sleep(.25)
+            window.maximize()
+            time.sleep(.25)
+            window.evaluate_js("document.documentElement.dataset.theme='light';themeLabel();window.scrollTo(0,0)")
+            layout('fluid-maximized-light')
+            window.evaluate_js("document.documentElement.dataset.theme='dark';themeLabel()")
+            layout('fluid-maximized-dark')
+            window.restore();window.resize(1920,1080)
+            time.sleep(.25)
+            for factor in (1.25,1.5):
+                on_ui_thread(window,lambda:setattr(window.native.browser.webview,'ZoomFactor',factor))
+                time.sleep(.25)
+                window.evaluate_js('window.scrollTo(0,0)')
+                layout(f'fluid-wide-zoom-{int(factor*100)}')
+                window.evaluate_js("q('run-history').querySelector('.log-table-wrap').scrollIntoView({block:'start'})")
+                layout(f'fluid-timeline-zoom-{int(factor*100)}')
+                click('#settings-button')
+                window.evaluate_js('window.scrollTo(0,0)')
+                layout(f'fluid-settings-zoom-{int(factor*100)}')
+                click('#back')
+            on_ui_thread(window,lambda:setattr(window.native.browser.webview,'ZoomFactor',1.0))
+            window.restore();window.resize(1440,900)
+            wait('innerWidth>1300')
+            # Preserve the starting theme expected by subsequent flow checks.
+            window.evaluate_js("document.documentElement.dataset.theme='light';themeLabel()")
+            report['checks'].append('fluid-width-matrix-themes-aligned-edges-readable-settings-timeline-native-resize')
+            # Home indicator: explicit fake probes only, shared state with Settings.
+            session.set_selection('pending')
+            window.evaluate_js("showSettings(false);window.scrollTo(0,0)")
+            wait("q('home-api-label').textContent==='API desconectada'")
+            layout('api-home-missing-light')
+            session.set_api_key('fictional-home-indicator-only')
+            wait("q('home-api-label').textContent==='API não verificada'")
+            with patch('src.api_connection.check_api_connection') as probe:
+                click('#home-api-status')
+                assert window.evaluate_js("!q('settings').classList.contains('hidden') && document.querySelector('#settings-generation details').open")
+                probe.assert_not_called()
+                click('#back')
+                window.evaluate_js("window.scrollTo(0,0);q('home-api-status').focus()")
+                layout('api-home-unverified-keyboard-light')
+                probe.assert_not_called()
+            finish_check = threading.Event()
+            def indicator_probe(key):
+                finish_check.wait(10)
+                return dict(status='connected', message='Autenticação fictícia confirmada.')
+            with patch('src.api_connection.check_api_connection', side_effect=indicator_probe):
+                click('#home-api-status');click('#api-key-check');click('#back')
+                wait("q('home-api-label').textContent==='Verificando API…'")
+                window.evaluate_js('window.scrollTo(0,0)')
+                layout('api-home-checking-light')
+                finish_check.set()
+                wait("q('home-api-label').textContent==='API conectada'")
+            layout('api-home-connected-light')
+            for result, label in [(dict(status='unverified',category='limited',message='Limite fictício, verificação inconclusiva.'),'API não verificada'),
+                                  (dict(status='disconnected',category='authentication',message='Autenticação fictícia recusada.'),'API desconectada')]:
+                with patch('src.api_connection.check_api_connection', return_value=result):
+                    click('#home-api-status');click('#api-key-check')
+                    wait("state.api_connection.status==="+json.dumps(result['status']))
+                    click('#back')
+                    wait("q('home-api-label').textContent==="+json.dumps(label))
+            click('#theme-toggle')
+            window.evaluate_js('window.scrollTo(0,0)')
+            layout('api-home-failed-dark')
+            session.set_api_key('fictional-home-replacement-only')
+            wait("q('home-api-label').textContent==='API não verificada'")
+            layout('api-home-replaced-dark')
+            session.clear_api_key('session')
+            wait("q('home-api-label').textContent==='API desconectada'")
+            report['checks'].append('home-api-states-explicit-only-synchronized-no-quota-as-disconnection')
+
+            # Hold a fake item in flight so pause/stop requests can be inspected.
+            entered, advance, resumed, finish_run = (threading.Event() for _ in range(4))
+            def fake_run(*args, control, **kwargs):
+                entered.set();advance.wait(30)
+                control.checkpoint();resumed.set();finish_run.wait(30)
+                return dict(success=0,errors=0,processed=0,stop_reason='Interrompido')
+            with patch('main.main', side_effect=fake_run) as run:
+                try:
+                    window.evaluate_js("q('start').click();q('start').click()")
+                    assert entered.wait(5)
+                    wait("state.active && q('start').textContent==='Simulando campanha…'")
+                    assert run.call_count==1
+                    assert window.evaluate_js("[...document.querySelectorAll('.campaign-control')].every(e=>e.disabled) && !q('settings-button').disabled && !q('open-output').disabled")
+                    window.evaluate_js("q('campaign-follow').scrollIntoView({block:'start'})")
+                    layout('buttons-running-dark')
+                    # Presentation of a real run, while the backend remains the
+                    # same controlled fake worker and the API gate stays closed.
+                    session.run_log['mode']='real'
+                    window.evaluate_js("api=async function(path,body){if(path==='start'&&body?.real)throw Error('Real API forbidden');const result=await window.diagnosticOriginalApi(path,body);if(path==='state')result.allow_api=true;return result;};refresh()")
+                    wait("q('real-start').disabled && q('real-start').textContent.includes('Gerando imagens')")
+                    window.evaluate_js("q('real-start').scrollIntoView({block:'center'})")
+                    layout('buttons-generating-fixture-dark')
+                    session.run_log['mode']='simulation'
+                    window.evaluate_js('api=window.diagnosticOriginalApi;refresh()')
+                    click('#settings-button')
+                    assert window.evaluate_js("q('save-settings').disabled && q('apply').disabled && q('max-jobs').disabled && !q('execution-lock-notice').classList.contains('hidden')")
+                    window.evaluate_js('window.scrollTo(0,0)')
+                    layout('settings-locked-dark')
+                    click('#back')
+                    (root/'images').mkdir(exist_ok=True)
+                    with patch('src.studio_session.os.startfile',create=True) as opened:
+                        click('#open-output')
+                        wait("!polling")
+                        deadline=time.monotonic()+3
+                        while not opened.called and time.monotonic()<deadline:time.sleep(.05)
+                        assert opened.call_count==1
+                    click('#pause')
+                    wait("state.pause_requested && !state.paused && q('pause').textContent.includes('Aguardando pausa')")
+                    assert window.evaluate_js("q('pause').disabled && q('resume').classList.contains('hidden')")
+                    window.evaluate_js("q('pause').scrollIntoView({block:'center'})")
+                    layout('buttons-pause-requested-dark')
+                    advance.set()
+                    wait("state.paused && state.status==='Pausado'")
+                    assert window.evaluate_js("!q('resume').disabled && q('pause').classList.contains('hidden')")
+                    layout('buttons-paused-dark')
+                    click('#resume')
+                    assert resumed.wait(5)
+                    wait('!state.paused && !state.pause_requested')
+                    click('#stop')
+                    wait("q('stop-dialog').open")
+                    assert window.evaluate_js("document.activeElement.id==='stop-cancel'")
+                    layout('buttons-stop-confirmation-dark')
+                    click('#stop-cancel')
+                    assert not session.control.stopped
+                    click('#stop');click('#stop-confirm')
+                    wait("state.stopping && q('stop').textContent.includes('Interrompendo')")
+                    assert window.evaluate_js("q('stop').disabled && q('pause').disabled && q('start').disabled")
+                    window.resize(520,600)
+                    wait('innerWidth<520')
+                    window.evaluate_js("q('stop').scrollIntoView({block:'center'})")
+                    layout('buttons-stopping-small-dark')
+                    click('#theme-toggle')
+                    window.evaluate_js("q('stop').scrollIntoView({block:'center'})")
+                    layout('buttons-stopping-small-light')
+                finally:
+                    advance.set();finish_run.set()
+                    if session.control: session.control.command('stop')
+                    if session.worker: session.worker.join(5)
+            wait('!state.active')
+            assert window.evaluate_js("!q('start').disabled && q('pause').disabled && q('stop').disabled")
+            report['checks'].append('buttons-double-start-locks-consult-settings-folder-pause-effective-stop-confirmation')
+            window.resize(1440,900)
+            wait('innerWidth>1300')
+            window.evaluate_js("api=async function(path,body){if(path==='start'&&body?.real)throw Error('Real API forbidden');const result=await window.diagnosticOriginalApi(path,body);if(path==='state')result.allow_api=true;return result;};refresh()")
+            wait("!q('real-start').classList.contains('hidden')")
+            window.evaluate_js("q('real-start').scrollIntoView({block:'center'})")
+            layout('buttons-idle-light')
+            click('#theme-toggle')
+            window.evaluate_js("q('real-start').scrollIntoView({block:'center'})")
+            layout('buttons-idle-dark')
+            window.evaluate_js('api=window.diagnosticOriginalApi;refresh()')
+            assert session.allow_api is False
             report["passed"] = True
         except Exception as exc:
             report["error"] = f"{type(exc).__name__}: {exc}"
             import traceback
             report['failure_line'] = traceback.extract_tb(exc.__traceback__)[-1].lineno
+            report['failure_stack'] = [f'{frame.name}:{frame.lineno}' for frame in traceback.extract_tb(exc.__traceback__)]
             report['timeline_layout'] = window.evaluate_js("(()=>{const e=q('run-history')?.querySelector('.log-table-wrap');return {width:innerWidth,height:innerHeight,left:q('campaign-setup')?.getBoundingClientRect().height,right:q('campaign-follow')?.getBoundingClientRect().height,tableHeight:e?.clientHeight,tableScroll:e?.scrollHeight,scrollTop:e?.scrollTop,tableTop:e?.getBoundingClientRect().top,headerTop:e?.querySelector('th').getBoundingClientRect().top};})()")
             report['execution_ui'] = window.evaluate_js("({history:q('history-data')?.textContent,historyOptions:q('history-choice')?.innerHTML,runs:state.history?.runs?.length,selection:q('selection-preview-data')?.textContent,error:q('error')?.textContent})")
             report["ui_failure"] = window.evaluate_js("({dialogOpen:document.querySelector('#generation-dialog')?.open,error:document.querySelector('#generation-error')?.textContent,confirmDisabled:document.querySelector('#generation-confirm')?.disabled,keyStatus:state?.api_key_status,paidCalls:window.diagnosticPaidCalls})")

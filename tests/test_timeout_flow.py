@@ -52,8 +52,9 @@ class TimeoutFlowTests(IsolatedTest):
     def session(self):
         session = StudioSession(self.root / 'settings.json', allow_api=True, env={})
         session.choose_queue(self.queue)
+        session.set_folders([{'alias': 'Produtos', 'path': str(self.queue.parent / 'referencias')}], 'Produtos')
         values = deepcopy(session.preferences)
-        values.update(max_jobs=10, max_images=10, safe_mode=False, timeout=120)
+        values.update(output_dir=str(self.output), max_jobs=10, max_images=10, safe_mode=False, timeout=120)
         values['image']['quality'] = 'max'
         session.set_preferences(values)
         session._session_api_key = 'isolated-fake-key'

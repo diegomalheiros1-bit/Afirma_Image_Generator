@@ -19,11 +19,12 @@ class ExecutionExperienceTests(IsolatedTest):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.queue, _, _ = fixtures.StageThreeTests().make_queue(self.root,
+        self.queue, refs, output = fixtures.StageThreeTests().make_queue(self.root,
             [[i, 'Produto', '', 'ok.png', str(i), 'PENDENTE', 0, ''] for i in range(1, 13)])
         self.session = StudioSession(self.root/'settings.json', allow_api=False, env={})
         self.session.choose_queue(self.queue)
-        self.session.set_preferences({**self.session.preferences, 'max_jobs': 10, 'max_images': 10, 'safe_mode': False})
+        self.session.set_folders([{'alias': 'Produtos', 'path': str(refs)}], 'Produtos')
+        self.session.set_preferences({**self.session.preferences, 'output_dir': str(output), 'max_jobs': 10, 'max_images': 10, 'safe_mode': False})
         self.config, self.prefs = self.session.snapshot()
 
     def selection(self, mode, records=None, ids=None, items=10, images=10):
@@ -88,6 +89,57 @@ class ExecutionExperienceTests(IsolatedTest):
         plan=self.selection('pending',items=10,images=2)
         self.assertEqual(plan['selected_ids'],['2','3'])
         self.assertEqual(plan['decisions'][0]['category'],'limit')
+
+    def moderation_record(self):
+        from main import make_job
+        from src.execution_state import fingerprint
+        self.set_statuses(['ERRO'])
+        row = load_queue(self.queue).iloc[0]
+        job = make_job(row, self.config, True)
+        identity, _ = execution_identity(job, row)
+        return {'1': dict(phase='rejected', execution=identity,
+            fingerprint=fingerprint(job, job.settings.model, job.settings.quality),
+            error=dict(category='parameters', api_code='moderation_blocked', uncertain=False))}
+
+    def test_moderation_retry_allows_unchanged_and_changed_content_without_mutation(self):
+        from PIL import Image
+        records = self.moderation_record()
+        original = deepcopy(records)
+        self.assertEqual(self.selection('errors', records)['selected_ids'], ['1'])
+        self.assertNotIn('1', self.selection('pending', records)['selected_ids'])
+        book = load_workbook(self.queue)
+        book['Fila_Geracao']['C2'] = 'Modelo adulto em publicidade de cosméticos, com roupa.'
+        book.save(self.queue); book.close()
+        self.assertEqual(self.selection('errors', records)['selected_ids'], ['1'])
+        self.assertEqual(records, original)
+        # A change to the actual image bytes is also recognized with the same path.
+        records = self.moderation_record()
+        Image.new('RGB', (12, 12), 'green').save(self.queue.parent/'referencias'/'ok.png')
+        self.assertEqual(self.selection('errors', records)['selected_ids'], ['1'])
+
+    def test_moderation_retry_does_not_require_settings_output_or_metadata_edits(self):
+        from dataclasses import replace
+        records = self.moderation_record()
+        self.config['image_settings'] = replace(self.config['image_settings'], quality='high')
+        self.assertEqual(self.selection('errors', records)['selected_ids'], ['1'])
+        book = load_workbook(self.queue)
+        book['Fila_Geracao']['E2'] = 'different-output'
+        book['Fila_Geracao']['H2'] = 'Apenas observação operacional'
+        book.save(self.queue); book.close()
+        self.assertEqual(self.selection('errors', records)['selected_ids'], ['1'])
+
+    def test_moderation_retry_keeps_uncertain_missing_evidence_and_outputs_blocked(self):
+        records = self.moderation_record()
+        book = load_workbook(self.queue)
+        book['Fila_Geracao']['C2'] = 'Prompt corrigido'
+        book.save(self.queue); book.close()
+        for mutation in ('uncertain', 'missing', 'output'):
+            with self.subTest(mutation=mutation):
+                candidate = deepcopy(records)
+                if mutation == 'uncertain': candidate['1']['error']['uncertain'] = True
+                if mutation == 'missing': candidate['1']['error'].pop('uncertain')
+                if mutation == 'output': Path(candidate['1']['execution']['outputs'][0]).write_bytes(png_bytes())
+                self.assertEqual(self.selection('errors', candidate)['selected_ids'], [])
 
     def test_old_history_requires_explicit_selection(self):
         self.session.run_log={'version':1,'planned_items':10,'events':[]}

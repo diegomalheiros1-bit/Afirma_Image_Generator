@@ -171,6 +171,10 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                         result = session.start(real=data.get("real", False) is True)
                     elif self.path == "/api/control":
                         session.command(data["action"])
+                    elif self.path == "/api/output/open":
+                        if lan:
+                            raise PermissionError("Abra a pasta somente no computador local.")
+                        session.open_output_folder()
                     else:
                         self.respond(404, {"error": "Ação inexistente."})
                         return

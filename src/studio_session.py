@@ -15,7 +15,7 @@ import uuid
 from PIL import Image
 from src.app_info import app_info
 from src.credential_store import CredentialStore
-from src.excel_reader import load_config, load_queue
+from src.excel_reader import load_queue
 from src.execution_state import queue_lock, PersistenceError, digest
 from src.image_settings import ImageSettings
 from src.job_values import cell_text, parse_quantity
@@ -72,7 +72,10 @@ def save_folder_sheet(queue, folders, default):
             for alias, path in roots.items():
                 sheet.append([alias, str(path)])
             if default:
-                config = book["Configuracao"]
+                config = (book["Configuracao"] if "Configuracao" in book
+                          else book.create_sheet("Configuracao"))
+                if config.max_row == 1 and config['A1'].value is None:
+                    config['A1'], config['B1'] = "Parametro", "Valor"
                 for row in config.iter_rows(min_row=2):
                     if row[0].value == "Pasta_Referencias":
                         row[1].value = str(roots[default])
@@ -88,6 +91,7 @@ class RunControl:
     def __init__(self, callback, simulation_delay=0):
         self.condition = threading.Condition()
         self.paused = False
+        self.at_pause = False
         self.stopped = False
         self.callback = callback
         self.delay = simulation_delay
@@ -96,24 +100,34 @@ class RunControl:
         self.callback(kind, values)
 
     def checkpoint(self):
-        with self.condition:
-            while self.paused and not self.stopped:
-                self.condition.wait(0.25)
-            if self.stopped:
-                return False
+        if not self._wait_pause():
+            return False
         if self.delay:
             time.sleep(self.delay)
-            with self.condition:
-                while self.paused and not self.stopped:
-                    self.condition.wait(0.25)
+        return self._wait_pause()
+
+    def _wait_pause(self):
+        with self.condition:
+            if not self.paused or self.stopped:
+                self.at_pause = False
                 return not self.stopped
-        return True
+            self.at_pause = True
+        # Never take the session lock while holding the condition: commands
+        # acquire these locks in the opposite order.
+        self.event('paused')
+        with self.condition:
+            while self.paused and not self.stopped:
+                self.condition.wait(.25)
+            self.at_pause = False
+            return not self.stopped
 
     def command(self, action):
         with self.condition:
             if action == "pause":
                 self.paused = True
             elif action == "resume":
+                if not self.paused or not self.at_pause:
+                    raise ValueError("Aguarde a pausa efetiva antes de retomar.")
                 self.paused = False
             elif action == "stop":
                 self.stopped = True
@@ -213,13 +227,14 @@ class StudioSession:
         return {'runs': sorted(records.values(), key=lambda r: str(r.get('started_at', '')), reverse=True), 'warnings': warnings}
 
     def set_selection(self, mode, run_id=None, ids=None):
-        from src.run_selection import MODES
-        from src.job_values import canonical_id
-        self.idle()
-        if mode not in MODES:
-            raise ValueError('Seleção inválida.')
-        self.selection_mode, self.resume_run_id = mode, run_id
-        self.explicit_ids = [canonical_id(v) for v in (ids or [])]
+        with self.lock:
+            from src.run_selection import MODES
+            from src.job_values import canonical_id
+            self.idle()
+            if mode not in MODES:
+                raise ValueError('Seleção inválida.')
+            self.selection_mode, self.resume_run_id = mode, run_id
+            self.explicit_ids = [canonical_id(v) for v in (ids or [])]
 
     def selection(self, config, prefs):
         from src.run_selection import plan_selection
@@ -258,47 +273,48 @@ class StudioSession:
         return result
 
     def review_action(self, item_id, action, consent=False):
-        from src.execution_state import Journal
-        from src.run_selection import review_evidence
-        from src.job_values import canonical_id
-        from src.excel_reader import save_queue
-        from src.generation_errors import sanitize_diagnostic
-        self.idle()
-        if action not in {'recover', 'release'} or consent is not True:
-            raise ValueError('Confirme explicitamente a ação de revisão.')
-        config, _ = self.snapshot()
-        with queue_lock(self.queue):
-            frame = load_queue(self.queue, reference_mode=self.mode)
-            index = next((i for i, r in frame.iterrows() if canonical_id(r['ID']) == item_id), None)
-            if index is None:
-                raise ValueError('Item não encontrado.')
-            journal = Journal(self.queue)
-            record = journal.records.get(item_id, {})
-            if cell_text(frame.loc[index, 'Status']).upper() not in {'REVISAO', 'PROCESSANDO'}:
-                raise ValueError('Este item não está em revisão.')
-            evidence = review_evidence(frame.loc[index], record, config)
-            if action == 'recover':
-                if not evidence['recoverable']:
-                    raise ValueError(evidence['reason'])
-                frame.at[index, 'Status'] = 'CONCLUIDO'
-                frame.at[index, 'Observacao'] = 'Recuperado por ação explícita; hashes e identidade comprovados.'
-                journal.put(item_id, review_actions=list(record.get('review_actions', [])) +
-                            [dict(at=self._stamp(), action='recover', verified_identity=True, verified_hashes=True)])
-                save_queue(frame, self.queue)
-            else:
-                if not evidence['releasable']:
-                    raise ValueError(evidence['reason'])
-                audit = list(record.get('review_actions', []))
-                audit.append(dict(at=self._stamp(), action='release', prior_phase=record.get('phase'),
-                                  diagnostic=sanitize_diagnostic(record.get('error', {})), duplicate_charge_acknowledged=True,
-                                  prior_attempt={name: deepcopy(record.get(name)) for name in
-                                      ('execution', 'execution_fingerprint', 'row_fingerprint', 'row_fingerprint_version',
-                                       'outputs', 'hashes', 'api_attempts', 'task_attempts')}))
-                journal.put(item_id, phase='retry_authorized', review_actions=audit)
-                frame.at[index, 'Status'] = 'PENDENTE'
-                frame.at[index, 'Observacao'] = 'Nova tentativa liberada explicitamente; possível cobrança adicional reconhecida.'
-                save_queue(frame, self.queue)
-        self._refresh_queue_summary()
+        with self.lock:
+            from src.execution_state import Journal
+            from src.run_selection import review_evidence
+            from src.job_values import canonical_id
+            from src.excel_reader import save_queue
+            from src.generation_errors import sanitize_diagnostic
+            self.idle()
+            if action not in {'recover', 'release'} or consent is not True:
+                raise ValueError('Confirme explicitamente a ação de revisão.')
+            config, _ = self.snapshot()
+            with queue_lock(self.queue):
+                frame = load_queue(self.queue, reference_mode=self.mode)
+                index = next((i for i, r in frame.iterrows() if canonical_id(r['ID']) == item_id), None)
+                if index is None:
+                    raise ValueError('Item não encontrado.')
+                journal = Journal(self.queue)
+                record = journal.records.get(item_id, {})
+                if cell_text(frame.loc[index, 'Status']).upper() not in {'REVISAO', 'PROCESSANDO'}:
+                    raise ValueError('Este item não está em revisão.')
+                evidence = review_evidence(frame.loc[index], record, config)
+                if action == 'recover':
+                    if not evidence['recoverable']:
+                        raise ValueError(evidence['reason'])
+                    frame.at[index, 'Status'] = 'CONCLUIDO'
+                    frame.at[index, 'Observacao'] = 'Recuperado por ação explícita; hashes e identidade comprovados.'
+                    journal.put(item_id, review_actions=list(record.get('review_actions', [])) +
+                                [dict(at=self._stamp(), action='recover', verified_identity=True, verified_hashes=True)])
+                    save_queue(frame, self.queue)
+                else:
+                    if not evidence['releasable']:
+                        raise ValueError(evidence['reason'])
+                    audit = list(record.get('review_actions', []))
+                    audit.append(dict(at=self._stamp(), action='release', prior_phase=record.get('phase'),
+                                      diagnostic=sanitize_diagnostic(record.get('error', {})), duplicate_charge_acknowledged=True,
+                                      prior_attempt={name: deepcopy(record.get(name)) for name in
+                                          ('execution', 'execution_fingerprint', 'row_fingerprint', 'row_fingerprint_version',
+                                           'outputs', 'hashes', 'api_attempts', 'task_attempts')}))
+                    journal.put(item_id, phase='retry_authorized', review_actions=audit)
+                    frame.at[index, 'Status'] = 'PENDENTE'
+                    frame.at[index, 'Observacao'] = 'Nova tentativa liberada explicitamente; possível cobrança adicional reconhecida.'
+                    save_queue(frame, self.queue)
+            self._refresh_queue_summary()
 
     @staticmethod
     def _stamp():
@@ -471,8 +487,6 @@ class StudioSession:
         if not self.queue:
             self.queue_summary = None
             return
-        if config is None:
-            config = load_config(self.queue, reference_mode="direct")
         frame = load_queue(self.queue, reference_mode=self.mode)
         prompts = frame.apply(
             lambda row: bool(cell_text(row.get("Prompt_Padrao")) or
@@ -527,23 +541,13 @@ class StudioSession:
         with self.lock:
             self.idle()
             path = Path(path).resolve(strict=True)
-            try:
-                config = load_config(path)
-            except ValueError:
-                if self.mode != "direct":
-                    raise
-                config = load_config(path, reference_mode="direct")
             previous = (self.queue, self.queue_summary)
             self.queue = path
             try:
-                self._refresh_queue_summary(config)
+                self._refresh_queue_summary()
             except Exception:
                 self.queue, self.queue_summary = previous
                 raise
-            self.folders = [{"alias": a, "path": str(p)} for a, p in config["reference_dirs"].items()]
-            self.default_folder = next((a for a, p in config["reference_dirs"].items()
-                                        if p == config["reference_dir"]), "")
-            self.legacy_root = config["reference_dir"]
             self.items, self.result, self.error = [], {}, ""
             self.selection_mode, self.resume_run_id, self.explicit_ids = "pending", None, []
             report = Path(str(path) + ".studio-run.json")
@@ -617,20 +621,22 @@ class StudioSession:
         if not self.queue:
             raise ValueError("Selecione a planilha da campanha.")
         prefs = self.checked_preferences(self.preferences)
-        # Session folder edits override the sheet registry without writing it.
-        config = load_config(self.queue, reference_mode="direct")
-        config.update(studio=True, reference_mode=self.mode, limit=prefs["max_jobs"],
+        if not prefs["output_dir"]:
+            raise ValueError("Escolha a pasta de saída no Studio antes de conferir ou gerar.")
+        # The menu is the only configuration source in Studio. CLI keeps its
+        # workbook configuration contract for existing command-line workflows.
+        config = dict(studio=True, reference_mode=self.mode, limit=prefs["max_jobs"],
+                      dry_run=True, reference_dirs={}, reference_dir=None,
+                      result_dir=Path(prefs["output_dir"]).resolve(),
                       image_settings=ImageSettings(**prefs["image"]))
         if self.mode == "spreadsheet":
             roots = validate_folders(self.folders, self.default_folder)
             config["reference_dirs"] = roots
-            config["reference_dir"] = roots[self.default_folder] if self.default_folder else self.legacy_root
-            if config["reference_dir"] is None:
+            config["reference_dir"] = roots[self.default_folder] if self.default_folder else None
+            if config["reference_dir"] is None and not roots:
                 raise ValueError("Escolha uma pasta padrão para usar referências pela planilha.")
         else:
             config["direct_references"] = validate_photos(self.photos)
-        if prefs["output_dir"]:
-            config["result_dir"] = Path(prefs["output_dir"]).resolve()
         return config, prefs
 
     def validate_campaign(self):
@@ -684,7 +690,11 @@ class StudioSession:
 
     def _event(self, kind, values):
         with self.lock:
-            if kind == "plan":
+            if kind == 'paused':
+                if self.active and self.control.paused and self.control.at_pause and not self.control.stopped:
+                    self.status = 'Pausado'
+                    self.run_log['status'] = self.status
+            elif kind == "plan":
                 self.total = values["total"]
                 self.run_log["planned_items"] = values["total"]
                 self.run_log["planned_images"] = values["images"]
@@ -733,6 +743,7 @@ class StudioSession:
                             'parent_run_id': previous.get('run_id'), 'selection_mode': self.selection_mode,
                             'selection_decisions': plan['selection']['decisions'], "run_id": uuid.uuid4().hex, "started_at": self._stamp(), "finished_at": None,
                             "elapsed_seconds": None, "mode": "real" if real else "simulation",
+                            "output_dir": plan['execution_preview']['output_dir'],
                             "status": "Gerando" if real else "Simulando", "planned_items": plan['execution_preview']['items'],
                             "planned_images": plan['execution_preview']['images'],
                             "settings": {"image": deepcopy(prefs["image"]), "max_jobs": prefs["max_jobs"],
@@ -809,12 +820,29 @@ class StudioSession:
             self.worker.start()
             return plan
 
+    def open_output_folder(self):
+        """Open only the configured local output directory, including while running."""
+        with self.lock:
+            if self.active and self.run_log and self.run_log.get('output_dir'):
+                path = Path(self.run_log['output_dir'])
+            else:
+                config, _ = self.snapshot()
+                path = Path(config['result_dir'])
+            path = path.resolve()
+            if not path.is_dir():
+                raise ValueError('A pasta de resultados ainda não existe. Ela será criada ao gerar imagens.')
+            if os.name != 'nt':
+                raise ValueError('A abertura de pasta está disponível no Windows.')
+            os.startfile(str(path), 'explore')
+
     def command(self, action):
         with self.lock:
             if not self.active or not self.control:
                 raise ValueError("Nenhuma execução ativa.")
             if self.control.stopped and action != 'stop':
                 raise ValueError('Interrupção já solicitada; aguarde o item atual e o salvamento do histórico.')
+            if action == 'pause' and self.control.paused:
+                return
             self.control.command(action)
             self.status = {"pause": "Pausa solicitada — após o item atual", "resume": "Executando",
                            "stop": "Interrupção solicitada — aguardando o item atual"}[action]
@@ -833,7 +861,8 @@ class StudioSession:
                         photos=[{"name": p.name, "path": str(p)} for p in self.photos],
                         folders=deepcopy(self.folders), default_folder=self.default_folder,
                         preferences=deepcopy(self.preferences), active=self.active,
-                        paused=bool(self.control and self.control.paused), status=self.status,
+                        paused=bool(self.active and self.control and self.control.paused and self.control.at_pause and not self.control.stopped), status=self.status,
+                        pause_requested=bool(self.active and self.control and self.control.paused and not self.control.stopped),
                         stopping=bool(self.active and self.control and self.control.stopped),
                         total=self.total, items=deepcopy(self.items), result=dict(self.result), error=self.error,
                         run_log=deepcopy(self.run_log), history=self.history(),

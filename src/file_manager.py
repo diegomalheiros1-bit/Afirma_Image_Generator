@@ -6,6 +6,8 @@ def validate_reference_path(reference_dir: Path, filename: str) -> Path:
     if not filename:
         raise ValueError("Arquivo_Referencia não informado.")
 
+    if reference_dir is None:
+        raise ValueError("Escolha uma pasta padrão para arquivos sem alias.")
     root = reference_dir.resolve()
     path = (root / filename).resolve()
     if not path.is_relative_to(root):

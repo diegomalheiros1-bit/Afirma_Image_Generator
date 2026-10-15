@@ -1,6 +1,21 @@
 # Afirma Image Generator
 
-**Versão atual: 1.0.9 — Afirma Image Studio para Windows.**
+**Versão atual: 1.0.15 — Afirma Image Studio para Windows.**
+
+O Studio usa as configurações da interface e aceita planilhas somente com a aba
+`Fila_Geracao`. Em **Repetir erros**, uma rejeição confirmada por moderação pode
+ser selecionada novamente mesmo sem alterar prompt ou referências. A geração
+continua exigindo confirmação; itens concluídos e resultados incertos são preservados.
+
+Validação da versão 1.0.15: **174 testes offline passaram** e o executável Windows
+passou no diagnóstico nativo com **116 verificações de layout**, sem chamadas pagas.
+
+Novidades: histórico de execuções recolhido ao abrir, com expansão pelo cabeçalho ou teclado. A escolha permanece durante as atualizações da mesma planilha.
+
+Inclui: [layout fluido em janelas amplas](docs/RESPONSIVIDADE.md), com margens
+laterais menores, alinhamento do workspace e formulários com largura de leitura
+preservada. Inclui as melhorias de [botões e indicador da API](docs/BOTOES_E_CONEXAO.md).
+
 
 Aplicativo Python para Windows para gerar imagens a partir de Excel, combinando prompt padrão,
 variação e referências de modelo/produto. Processamento sequencial e local.
@@ -250,9 +265,9 @@ proteção de arquivos existentes e retomada sem repetir chamadas. A conferênci
 Os testes de conexão cobrem autenticação, permissões, limites, falhas de rede,
 timeout, resposta atrasada para uma chave removida e proteção dos endpoints locais.
 
-Validação da **versão 1.0.9 em 13/10/2026**: **164 testes automatizados passaram**,
+Validação da **versão 1.0.11 em 14/10/2026**: **167 testes automatizados passaram**,
 com conexões externas bloqueadas, fixtures temporárias e clientes simulados.
-O executável empacotado e uma extração nova do ZIP passaram em **52 verificações
+O executável empacotado e uma extração nova do ZIP passaram em **106 verificações
 de interface**, incluindo três ações sem sobreposição, retomada pelo histórico,
 tooltips por teclado, revisão liberada ainda marcada `REVISAO`, temas, zoom e
 redimensionamento. A extração foi testada sem Python no PATH e sem credenciais
@@ -293,6 +308,12 @@ No Studio, a chave informada na interface tem precedência sobre o ambiente e o
 `Dry_Run` da aba `Configuracao`. Feche o Excel antes de executar o programa.
 
 ## Planilha e referências
+
+No Studio, somente a aba `Fila_Geracao` é necessária. As abas `Configuracao`
+e `Pastas_Referencias` não são lidas pelo Studio: use os controles da interface
+para definir pastas, saída, parâmetros de imagem e limites. Selecione a pasta
+de saída antes de conferir ou gerar. As pastas de referência permanecem na
+sessão ao trocar de planilha. No CLI, a aba `Configuracao` continua obrigatória.
 
 A aba `Fila_Geracao` requer `ID`, `Prompt_Padrao`, `Prompt_Variacao`,
 `Nome_Saida`, `Status`, `Tentativas` e `Observacao`. `Arquivo_Referencia` é

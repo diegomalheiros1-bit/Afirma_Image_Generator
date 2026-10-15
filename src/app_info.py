@@ -1,7 +1,7 @@
 """Public product identity shared by the UI and Windows release metadata."""
 
 APP_NAME = "Afirma Image Studio"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.15"
 DEVELOPER = "Diego Stanisci Malheiros"
 
 

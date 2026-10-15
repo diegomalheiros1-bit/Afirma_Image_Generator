@@ -30,6 +30,8 @@ class ReadinessTests(IsolatedTest):
             [1, 'Produto', 'Fundo claro', 'ok.png', 'result.png', 'PENDENTE', 0, '']])
         self.session = StudioSession(self.root / 'settings.json', env={})
         self.session.choose_queue(self.queue)
+        self.session.set_folders([{'alias': 'Produtos', 'path': str(self.refs)}], 'Produtos')
+        self.session.set_preferences({**self.session.preferences, 'output_dir': str(self.output)})
 
     def test_invalid_queue_selection_preserves_previous_campaign(self):
         previous = self.session.state()

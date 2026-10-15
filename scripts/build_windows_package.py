@@ -99,6 +99,10 @@ def main():
     (destination / guide.name).write_text(guide.read_text('utf-8'), encoding='utf-8')
     credentials_guide = ROOT / 'docs' / 'CREDENCIAIS.md'
     (destination / credentials_guide.name).write_text(credentials_guide.read_text('utf-8'), encoding='utf-8')
+    buttons_guide = ROOT / 'docs' / 'BOTOES_E_CONEXAO.md'
+    (destination / buttons_guide.name).write_text(buttons_guide.read_text('utf-8'), encoding='utf-8')
+    responsive_guide = ROOT / 'docs' / 'RESPONSIVIDADE.md'
+    (destination / responsive_guide.name).write_text(responsive_guide.read_text('utf-8'), encoding='utf-8')
     files = package_files(destination)
     # Exercise the actual frozen .exe, WebView2 renderer and UI in isolated data.
     verification = release / 'verification'
@@ -114,7 +118,7 @@ def main():
             package.write(path, path.relative_to(release))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (release / 'SHA256.txt').write_text(f'{digest}  {archive.name}\n', encoding='ascii')
-    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide, credentials_guide,
+    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide, credentials_guide, buttons_guide, responsive_guide,
                     *sorted((ROOT / 'src').glob('*.py')), ROOT / 'requirements-desktop.txt',
                     ROOT / 'requirements-build-windows.txt', Path(__file__).resolve()]
     info = {

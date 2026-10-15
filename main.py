@@ -182,8 +182,11 @@ def main(queue_path=QUEUE_PATH, reference_dir=None, generator=None, *, env=None,
 
 
 def process_queue(queue, reference_dir, generator, env, overrides=None, control=None):
-    config = load_config(queue, reference_mode=("direct" if overrides and "reference_dirs" in overrides else
-                                               (overrides or {}).get("reference_mode", "spreadsheet")))
+    if overrides and overrides.get("studio"):
+        config = deepcopy(overrides)
+    else:
+        config = load_config(queue, reference_mode=("direct" if overrides and "reference_dirs" in overrides else
+                                                   (overrides or {}).get("reference_mode", "spreadsheet")))
     if "DRY_RUN" in env:
         config["dry_run"] = flag(env["DRY_RUN"])
     if reference_dir is not None:

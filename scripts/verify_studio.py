@@ -49,10 +49,12 @@ if __name__=='__main__':
     queue=fixture(root)
     session=StudioSession(root/'preferences.json',env={})
     session.choose_queue(queue)
+    session.set_folders([{'alias': 'Produtos', 'path': str(root/'produtos')},
+                         {'alias': 'Marca', 'path': str(root/'marca')}], 'Produtos')
     session.add_photos([root/'produtos'/'foto.png'])
     session.add_photos([root/'marca'/'foto.png'])
     preferences=session.preferences.copy()
-    preferences.update(max_jobs=12,max_images=12,safe_mode=False)
+    preferences.update(output_dir=str(root/'imagens'),max_jobs=12,max_images=12,safe_mode=False)
     session.set_preferences(preferences)
     server=make_server(session,port=int(sys.argv[1]) if len(sys.argv)>1 else 0)
     url=f'http://127.0.0.1:{server.server_port}/'

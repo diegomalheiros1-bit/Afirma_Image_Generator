@@ -79,7 +79,15 @@ rejeitados; o provider envia cópias imutáveis dos bytes validados.
 
 ## Várias pastas e compatibilidade com Excel
 
-A seleção da planilha carrega a aba opcional `Pastas_Referencias`:
+O Studio precisa somente da aba `Fila_Geracao`. As configurações de geração
+vêm da interface; `Configuracao` e `Pastas_Referencias` não são lidas, mesmo
+quando existem no Excel. Selecione a pasta de saída na tela antes de conferir
+ou gerar. Cadastre as pastas de referência na interface e escolha a padrão
+para arquivos sem alias. Esses cadastros permanecem na sessão ao trocar de
+planilha. O botão de salvar pastas no Excel é uma exportação opcional para
+compatibilidade com o CLI, que continua lendo suas configurações da planilha.
+
+Para uso por linha de comando, a aba opcional `Pastas_Referencias` aceita:
 
 | Alias | Caminho |
 | --- | --- |
@@ -87,8 +95,8 @@ A seleção da planilha carrega a aba opcional `Pastas_Referencias`:
 | Marca | D:\Identidade\Marca |
 
 Exemplo: `Produtos::frente.jpg; Marca::logos\principal.png`.
-Arquivos sem alias usam a pasta padrão, originalmente `Pasta_Referencias` da aba
-`Configuracao`. Planilhas antigas continuam funcionando sem a aba adicional.
+No Studio, arquivos sem alias usam a pasta padrão escolhida na interface.
+No CLI, usam `Pasta_Referencias` da aba `Configuracao`.
 Aliases começam com letra ASCII e têm até 40 caracteres: letras, números, `_`, `-`.
 Duplicados são rejeitados inclusive quando diferem apenas por maiúsculas.
 O uso do alias é exato, incluindo maiúsculas/minúsculas.
@@ -100,8 +108,9 @@ explicitamente antes. Arquivos sem alias não são redirecionados silenciosament
 Caminhos finais são resolvidos, incluindo junctions e links: nenhum arquivo pode
 escapar da raiz autorizada. Subpastas dentro dessa raiz são permitidas.
 
-O cadastro editado fica **somente na sessão** até clicar em **Salvar pastas na
-planilha** e confirmar a gravação explícita. Essa ação usa a trava da fila e uma
+O cadastro usado pelo Studio fica **somente na sessão**. O botão **Salvar pastas na
+planilha** exporta o cadastro para uso no CLI após confirmação explícita;
+o Studio não importa esse cadastro ao reabrir. Essa ação usa a trava da fila e uma
 substituição atômica do Excel; atualiza `Pastas_Referencias` e, quando escolhida,
 `Pasta_Referencias` para a pasta padrão absoluta. As demais abas são preservadas.
 Não é necessário salvar o cadastro para simular ou gerar nesta sessão.
@@ -170,8 +179,8 @@ Fontes oficiais conferidas em 06/10/2026:
 - Studio: preferências salvas > valores não secretos do ambiente/`.env` do
   **projeto** > padrões. Alterações aplicadas na sessão têm precedência na próxima
   execução; o snapshot da interface prevalece sobre os parâmetros de imagem do
-  ambiente. Pasta de saída vazia usa o Excel. O máximo de itens informado na
-  interface prevalece sobre `Limite_Por_Execucao` do Excel, sem editar o arquivo.
+  ambiente. A pasta de saída deve ser selecionada na interface. Valores nas
+  abas de configuração do Excel são ignorados, sem editar o arquivo.
 - Simular impõe `DRY_RUN=SIM`; gerar impõe `DRY_RUN=NAO`, somente quando o servidor
   foi iniciado explicitamente com `--enable-api`. Modo seguro exige limites
   de itens e imagens da interface <= 1. Simulação não lê a chave
@@ -346,3 +355,36 @@ do painel de preparação. A tabela usa o espaço disponível e não cresce com 
 quantidade de linhas. Em uma coluna, sua altura é limitada a uma parte da janela.
 Os resumos continuam disponíveis e todos os itens podem ser consultados pela
 rolagem, inclusive o último. O histórico persistido e os estados não são alterados.
+
+
+## Botões e conexão na Home (1.0.10)
+
+Consulte [Botões e conexão](BOTOES_E_CONEXAO.md) para a paleta, os bloqueios
+durante execução, pausa solicitada versus efetiva, confirmação de interrupção
+e os estados do indicador de autenticação. Clicar no indicador apenas abre
+as configurações; não inicia uma verificação.
+
+
+## Layout fluido (1.0.11)
+
+A Home usa toda a largura disponível com margens responsivas. Configurações
+mantêm largura limitada para leitura. Veja [Responsividade](RESPONSIVIDADE.md)
+para a matriz de tamanhos, temas, zoom e preservação da rolagem da linha do tempo.
+
+
+### Histórico recolhido (1.0.12)
+
+O bloco **Histórico de execuções** começa recolhido. Clique em qualquer ponto do
+cabeçalho ou use Tab para focá-lo e Enter/Espaço para abrir ou fechar. A seta
+indica o estado. Ao expandir, escolha uma execução, consulte os detalhes ou use
+**Retomar lote**, que continua apenas preparando a seleção.
+
+Atualizações automáticas e a navegação para Configurações preservam a escolha
+enquanto a mesma planilha estiver selecionada. Trocar a planilha ou reabrir o
+aplicativo recolhe o bloco. Expandir/recolher não dispara consultas adicionais
+nem grava registros. O acompanhamento e sua linha do tempo permanecem separados.
+
+Validação local: diagnóstico WebView2 com API bloqueada, histórico vazio e
+múltiplas execuções fictícias, troca de planilha, atualização periódica, teclado,
+seleção, detalhes, retomada e capturas nos dois temas. O pacote Windows passa
+pelo mesmo diagnóstico em instância isolada.

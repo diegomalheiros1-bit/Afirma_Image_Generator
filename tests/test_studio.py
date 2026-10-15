@@ -34,6 +34,93 @@ def image_bytes(fmt):
 
 
 class StudioTests(IsolatedTest):
+    def test_local_image_parameter_and_quota_errors_do_not_change_connection(self):
+        self.session.set_api_key('fictional-connection-state-only')
+        with patch('src.api_connection.check_api_connection',return_value=dict(status='connected',message='OK')):
+            self.session.verify_api_key();self.session.connection_worker.join(3)
+        original = deepcopy(self.session.state()['api_connection'])
+        self.session.run_log = dict(events=[],run_id='fictional-connection-errors')
+        for category in ['local_io','invalid_response','parameters','quota','timeout']:
+            self.session._event('item',dict(id='1',status='REVISAO',message='Erro fictício.',diagnostic=dict(category=category)))
+            self.assertEqual(self.session.state()['api_connection'],original)
+        self.assertNotIn('fictional-connection-state-only',json.dumps(self.session.state()))
+
+    def test_pause_is_effective_only_at_checkpoint_and_stop_remains_active(self):
+        entered, release, paused, finish = (threading.Event() for _ in range(4))
+        def fake_main(*args, control, **kwargs):
+            entered.set()
+            release.wait(5)
+            control.checkpoint()
+            paused.set()
+            finish.wait(5)
+            return dict(success=0, errors=0, processed=0, stop_reason='Interrompido')
+        with patch('main.main', side_effect=fake_main):
+            try:
+                self.session.start()
+                self.assertTrue(entered.wait(3))
+                self.session.command('pause')
+                state = self.session.state()
+                self.assertTrue(state['pause_requested'])
+                self.assertFalse(state['paused'])
+                with self.assertRaisesRegex(ValueError, 'pausa efetiva'):
+                    self.session.command('resume')
+                release.set()
+                deadline = time.monotonic()+3
+                while not self.session.state()['paused'] and time.monotonic()<deadline:
+                    time.sleep(.01)
+                self.assertEqual(self.session.state()['status'], 'Pausado')
+                self.session.command('resume')
+                self.assertTrue(paused.wait(3))
+                self.session.command('stop')
+                state = self.session.state()
+                self.assertTrue(state['active'] and state['stopping'])
+                self.assertFalse(state['paused'])
+                with self.assertRaises(ValueError):
+                    self.session.command('resume')
+            finally:
+                release.set();finish.set()
+                if self.session.control:
+                    self.session.control.command('stop')
+                self.session.worker.join(5)
+        self.assertFalse(self.session.state()['active'])
+
+    def test_concurrent_start_and_all_mutations_blocked_but_reads_and_folder_allowed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        entered, finish = threading.Event(), threading.Event()
+        def fake_main(*args, **kwargs):
+            entered.set();finish.wait(5)
+            return dict(success=0, errors=0, processed=0)
+        with patch('main.main', side_effect=fake_main) as run:
+            try:
+                with ThreadPoolExecutor(2) as pool:
+                    futures = [pool.submit(self.session.start) for _ in range(2)]
+                    outcomes = []
+                    for future in futures:
+                        try: future.result();outcomes.append('started')
+                        except ValueError: outcomes.append('blocked')
+                self.assertEqual(sorted(outcomes), ['blocked','started'])
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(run.call_count, 1)
+                for mutate in [lambda:self.session.start(real=True),
+                    lambda:self.session.set_selection('errors'),
+                    lambda:self.session.set_preferences(self.session.preferences,persist=True),
+                    lambda:self.session.set_api_key('fictional-new-credential-only'),
+                    lambda:self.session.clear_api_key('session'),
+                    lambda:self.session.remove_photo(0),
+                    lambda:self.session.save_folders(),
+                    lambda:self.session.review_action('1','release',True)]:
+                    with self.assertRaisesRegex(ValueError,'ativa'): mutate()
+                self.assertTrue(self.session.state()['active'])
+                self.assertTrue(self.session.history()['runs'])
+                self.output.mkdir(parents=True,exist_ok=True)
+                with patch('src.studio_session.os.startfile',create=True) as open_folder:
+                    self.session.open_output_folder()
+                    open_folder.assert_called_once_with(str(self.output.resolve()),'explore')
+                self.assertEqual(self.session.state()['api_connection']['status'],'unverified')
+            finally:
+                finish.set()
+                if self.session.worker:self.session.worker.join(5)
+
     def test_frozen_native_picker_uses_the_executable(self):
         with patch('studio.sys.frozen', True, create=True), patch('studio.subprocess.run') as run:
             run.return_value.stdout = '["C:\\\\Fotos\\\\produto.png"]'
@@ -50,6 +137,7 @@ class StudioTests(IsolatedTest):
         self.queue, self.refs, self.output = StageThreeTests().make_queue(self.root, rows)
         self.session = StudioSession(self.root / "settings.json", env={})
         self.session.choose_queue(self.queue)
+        self.configure_session(self.session, self.refs, self.output)
         self.env = dict(IMAGE_PROVIDER="openai", DRY_RUN="NAO", FIRST_RUN_SAFE_MODE="NAO", MAX_JOBS_PER_RUN="20", MAX_IMAGES_PER_RUN="20")
         self.api = Mock(side_effect=lambda **kw: SimpleNamespace(data=[SimpleNamespace(
             b64_json=base64.b64encode(image_bytes(kw['output_format'])).decode()) for _ in range(kw['n'])]))
@@ -57,12 +145,66 @@ class StudioTests(IsolatedTest):
     def generator(self, settings=None):
         return OpenAIImageGenerator(client=SimpleNamespace(images=SimpleNamespace(edit=self.api)), settings=settings)
 
+    def test_queue_only_workbook_validates_and_runs_without_config(self):
+        self.edit_queue(lambda book: book.remove(book['Configuracao']))
+        before = digest(self.queue)
+        self.session.choose_queue(self.queue)
+        plan = self.session.validate_campaign()
+        self.assertEqual(Path(plan['execution_preview']['output_dir']), self.output)
+        self.session.start()
+        self.session.worker.join(5)
+        self.assertFalse(self.session.active)
+        self.assertEqual(self.session.result['success'], 1)
+        self.assertEqual(digest(self.queue), before)
+        self.api.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'Configuracao'):
+            load_config(self.queue)
+
+    def test_invalid_workbook_config_cannot_override_menu_or_block_studio(self):
+        def corrupt_config(book):
+            book['Configuracao']['B2'] = 'missing-folder'
+            book['Configuracao']['B3'] = 'wrong-output'
+            book['Configuracao']['B4'] = 'not-a-number'
+            book['Configuracao']['B5'] = 'invalid-dry-run'
+            sheet = book.create_sheet('Pastas_Referencias')
+            sheet.append(['wrong-header', 'wrong-header'])
+        self.edit_queue(corrupt_config)
+        before = digest(self.queue)
+        self.session.choose_queue(self.queue)
+        config, _ = self.session.snapshot()
+        self.assertEqual(config['result_dir'], self.output)
+        self.assertEqual(config['reference_dir'], self.refs)
+        self.assertEqual(config['limit'], 1)
+        self.assertEqual(len(self.session.validate_campaign()['jobs']), 8)
+        self.assertEqual(digest(self.queue), before)
+
+    def test_unconfigured_output_requires_explicit_menu_selection(self):
+        fresh = StudioSession(self.root / 'no-output.json', env={})
+        fresh.choose_queue(self.queue)
+        self.assertEqual(fresh.queue_summary['pending_items'], 8)
+        with self.assertRaisesRegex(ValueError, 'pasta de saída'):
+            fresh.snapshot()
+
+    def test_switching_workbooks_preserves_menu_folders_and_output(self):
+        queue, _, _ = StageThreeTests().make_queue(self.root / 'another', [
+            [1, 'Prompt', '', 'ok.png', 'other.png', 'PENDENTE', 0, '']])
+        self.session.choose_queue(queue)
+        config, _ = self.session.snapshot()
+        self.assertEqual(config['reference_dir'], self.refs)
+        self.assertEqual(config['result_dir'], self.output)
+
+    @staticmethod
+    def configure_session(session, refs, output):
+        session.set_folders([{'alias': 'Produtos', 'path': str(refs)}], 'Produtos')
+        session.set_preferences({**session.preferences, 'output_dir': str(output.resolve())})
+
     def test_confirmation_preview_respects_quantities_and_image_limits_read_only(self):
         rows = [[i, 'Prompt', '', 'ok.png', f'{i}.png', 'PENDENTE', 0, '', '', '', '', '', quantity, '']
                 for i, quantity in enumerate((2, 1, 2), 1)]
-        queue, _, output = StageThreeTests().make_queue(self.root / 'confirmation', rows, optional=True)
+        queue, refs, output = StageThreeTests().make_queue(self.root / 'confirmation', rows, optional=True)
         session = StudioSession(self.root / 'preview-settings.json', env={})
         session.choose_queue(queue)
+        self.configure_session(session, refs, output)
         values = deepcopy(session.preferences)
         values.update(max_jobs=2, max_images=3, safe_mode=False)
         session.set_preferences(values)
@@ -91,7 +233,7 @@ class StudioTests(IsolatedTest):
     def test_studio_ten_item_limit_overrides_sheet_one_without_writing_workbook(self):
         rows = [[i, 'Prompt', '', 'ok.png', f'{i}.png', 'PENDENTE', 0, '']
                 for i in range(1, 13)]
-        queue, _, _ = StageThreeTests().make_queue(self.root / 'ten-items', rows)
+        queue, refs, output = StageThreeTests().make_queue(self.root / 'ten-items', rows)
         book = load_workbook(queue)
         book['Configuracao']['B4'] = 1
         book.save(queue)
@@ -99,6 +241,7 @@ class StudioTests(IsolatedTest):
         before = digest(queue)
         session = StudioSession(self.root / 'ten-settings.json', env={})
         session.choose_queue(queue)
+        self.configure_session(session, refs, output)
         values = deepcopy(session.preferences)
         values.update(max_jobs=10, max_images=10, safe_mode=False)
         session.set_preferences(values)
@@ -337,9 +480,10 @@ class StudioTests(IsolatedTest):
                 names = ('produto', '1.01.06.2702.1', 'outro.webp' if fmt != 'webp' else 'outro.jpg')
                 rows = [[i, 'Fotografia', '', 'ok.png', name, 'PENDENTE', 0, '']
                         for i, name in enumerate(names, 1)]
-                queue, _, _ = StageThreeTests().make_queue(self.root / fmt, rows)
+                queue, refs, output = StageThreeTests().make_queue(self.root / fmt, rows)
                 session = StudioSession(self.root / f'{fmt}-settings.json', env={})
                 session.choose_queue(queue)
+                self.configure_session(session, refs, output)
                 settings = ImageSettings(output_format=fmt)
                 values = deepcopy(session.preferences)
                 values.update(image=asdict(settings), max_jobs=3, max_images=3, safe_mode=False)

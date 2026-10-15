@@ -11,6 +11,9 @@ imagens são independentes; um item com várias imagens é selecionado inteiro.
 - **Repetir erros:** rejeições locais cuja validação
   agora passa; rejeições transitórias confirmadas de limite de taxa/sobrecarga;
   erros de parâmetros após alteração das configurações e validação local.
+  Desde a versão 1.0.15, rejeições confirmadas `moderation_blocked` também podem
+  ser selecionadas sem alterar prompt, referências ou configurações. Isso não
+  inicia a chamada: a geração depende da confirmação explícita na interface.
 - **Repetir itens em revisão:** seleciona exclusivamente revisões liberadas
   explicitamente, sem incluir pendentes comuns ou outros erros. Primeiro clique
   **Revisar e liberar itens**, confira as evidências e confirme **Liberar nova
@@ -144,3 +147,19 @@ conexões externas. Reproduza com `python scripts/run_local_tests.py`.
 O pacote é local, separado da instalação atual. Não houve alteração da campanha,
 chave ou sessão do usuário, push ou publicação. Custo, latência e qualidade do
 serviço real permanecem pendentes de nova autorização explícita para teste pago.
+
+## Histórico recolhido na versão 1.0.12
+
+O cartão **Histórico de execuções** começa recolhido. Clique no cabeçalho ou
+foque-o com Tab e pressione Enter/Espaço para expandir ou recolher. A seta e o
+estado acessível acompanham a escolha. Seleção de execução, detalhes e
+**Retomar lote** continuam disponíveis ao expandir.
+
+As atualizações automáticas preservam a abertura enquanto a mesma planilha
+estiver selecionada. Trocar de planilha ou reabrir o aplicativo recolhe o cartão.
+Abrir/fechar não consulta nem grava registros adicionais; o painel de
+acompanhamento e sua linha do tempo não são recolhidos por esta ação.
+
+Na versão 1.0.12, a suíte local passou com **167 testes**, sem falhas ou erros.
+O diagnóstico nativo passou com **116 verificações de layout e capturas**,
+incluindo teclado, atualizações, troca de planilha e os dois temas.

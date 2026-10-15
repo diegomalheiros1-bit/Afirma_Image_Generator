@@ -14,13 +14,17 @@ def check_api_connection(key):
     except Exception as exc:
         status = getattr(exc, "status_code", None)
         if isinstance(exc, APITimeoutError):
+            category = "timeout"
             message = "A verificação demorou além do esperado. Tente novamente."
         elif isinstance(exc, APIConnectionError):
+            category = "connection"
             message = "Não foi possível acessar a OpenAI. Confira sua conexão e tente novamente."
         else:
+            category = {401: 'authentication', 403: 'permission', 429: 'limited'}.get(status, 'provider')
             message = {
                 401: "Autenticação recusada. Confira a chave e as restrições de acesso da sua conta.",
                 403: "A conta ou chave não tem permissão para esta verificação. Confira as permissões na OpenAI.",
                 429: "A OpenAI limitou a verificação. Confira os limites da conta e tente novamente mais tarde.",
             }.get(status, "A conexão não pôde ser confirmada. Tente novamente em instantes.")
-        return {"status": "disconnected", "message": message}
+        return {"status": "disconnected" if category in {'authentication', 'connection', 'timeout'} else "unverified",
+                "category": category, "message": message}
