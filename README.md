@@ -1,14 +1,34 @@
 # Afirma Image Generator
 
-**Versão atual: 1.0.15 — Afirma Image Studio para Windows.**
+**Versão principal: 1.0.18 — Afirma Image Studio para Windows.**
+
+Esta é a versão de referência da branch `main`, mantida como principal a partir
+de 16/10/2026. O repositório contém o código, os testes e as instruções para
+reproduzir o pacote Windows; campanhas, credenciais e resultados ficam locais.
+
+## Melhorias da versão 1.0.18
+
+No Studio, retornar um item concluído para `PENDENTE` na própria planilha permite
+gerá-lo novamente em **Gerar pendentes**, mesmo sem mudar o prompt ou o ID.
+As imagens e o registro anteriores são preservados; as novas saídas usam nomes
+disponíveis. Confira os IDs e os limites antes de confirmar a geração paga.
+Resultados incertos continuam exigindo revisão.
+
+No Studio, nomes de saída já existentes recebem um sufixo disponível (`_02`,
+`_03` etc.). O nome efetivo é registrado antes da chamada; retomadas reutilizam
+o registro e não renumeram tentativas com histórico. `Nome_Saida` no Excel é preservado.
+
+Referências podem ser informadas só pelo nome: `produto.jpg; afeto.jpeg; casa.jpeg`.
+O programa busca em todas as pastas cadastradas e reconhece acentos Unicode
+equivalentes. Nomes repetidos em pastas diferentes exigem um alias para escolher.
 
 O Studio usa as configurações da interface e aceita planilhas somente com a aba
 `Fila_Geracao`. Em **Repetir erros**, uma rejeição confirmada por moderação pode
 ser selecionada novamente mesmo sem alterar prompt ou referências. A geração
 continua exigindo confirmação; itens concluídos e resultados incertos são preservados.
 
-Validação da versão 1.0.15: **174 testes offline passaram** e o executável Windows
-passou no diagnóstico nativo com **116 verificações de layout**, sem chamadas pagas.
+Validação da versão 1.0.18: **194 testes offline passaram** e o executável Windows
+passou no diagnóstico nativo com **118 verificações de layout**, sem chamadas pagas.
 
 Novidades: histórico de execuções recolhido ao abrir, com expansão pelo cabeçalho ou teclado. A escolha permanece durante as atualizações da mesma planilha.
 
@@ -98,12 +118,13 @@ limitada, sem expandir a página com todos os eventos. O diagnóstico cobre
 
 | Ação | Itens incluídos |
 | --- | --- |
-| **Gerar pendentes** | Pendentes comuns, sem chamada incerta ou liberação de revisão |
+| **Gerar pendentes** | Itens `PENDENTE` na planilha, inclusive concluídos retornados a esse status; chamadas incertas exigem revisão |
 | **Repetir erros** | Erros confirmados aptos a nova tentativa, após validação da causa |
 | **Repetir itens em revisão** | Somente revisões liberadas explicitamente, com provas revalidadas |
 
-Os limites de itens e imagens são aplicados à seleção efetiva. Itens concluídos
-e suas saídas são preservados. Uma seleção vazia não inicia chamadas.
+Os limites de itens e imagens são aplicados à seleção efetiva. Itens que continuam
+`CONCLUIDO` são excluídos; se retornarem a `PENDENTE`, o Studio prepara uma nova
+geração preservando os arquivos e o registro anteriores. Uma seleção vazia não inicia chamadas.
 
 Em **Itens em revisão**, use **Conferir evidências** e **Liberar nova tentativa**
 para cada item desejado. A confirmação avisa que reenviar uma chamada incerta
@@ -153,7 +174,8 @@ local não confirma cancelamento remoto.
 No modo direto, `Arquivo_Referencia` é ignorado e pode estar vazio ou ausente;
 `Pasta_Referencias` também pode estar vazia ou ausente. A planilha continua
 necessária para os demais dados. Não há fallback automático entre os modos.
-Ao voltar ao modo planilha sem configuração legada, escolha uma pasta padrão.
+Ao voltar ao modo planilha, cadastre as pastas que contêm os arquivos usados
+em `Arquivo_Referencia`; não é necessário escolher uma pasta padrão.
 
 Ao selecionar a planilha, o Studio resume itens com prompt, itens e imagens
 pendentes, imagens concluídas e o tamanho da próxima execução. O painel de
@@ -326,8 +348,9 @@ e `Observacao_Usuario`. Quantidade ausente/vazia significa 1; deve ser inteira
 positiva. Na OpenAI, use de 1 a 10 por job.
 
 `Arquivo_Referencia` aceita `modelo.jpg;produto.png`, preservando a ordem.
-No modo planilha, as referências devem existir sob a pasta padrão ou a pasta
-identificada pelo alias. No modo direto, valem os arquivos escolhidos na interface. PNG, JPEG/JPG e
+No modo planilha, as referências devem existir em uma das pastas cadastradas,
+ou na pasta identificada pelo alias quando ele for informado. No modo direto,
+valem os arquivos escolhidos na interface. PNG, JPEG/JPG e
 WEBP são aceitos. Antes da chamada real, o conteúdo também é validado como
 imagem; OpenAI aceita até 16 referências, cada uma menor que 50 MB.
 
@@ -541,9 +564,13 @@ mantenha bloqueado. O MVP não consegue recuperar a resposta perdida da API.
 Preserve Excel, registro e arquivos e compare com backups da execução original.
 Não apague entradas, não invente hashes e não preencha metadados antigos com a
 configuração atual. Restaure dados originais somente com evidência verificável;
-se faltar comprovação, mantenha REVISAO. Se decidir conscientemente pagar por
-uma nova geração, crie outra linha com ID novo e inequívoco e outro nome de
-saída, mantendo a linha e o registro anteriores para auditoria.
+se faltar comprovação, mantenha REVISAO. No Studio, se decidir conscientemente
+pagar por uma nova geração, use **Conferir evidências > Liberar nova tentativa**
+e confirme o aviso de possível nova cobrança. Depois confira a seleção em
+**Repetir itens em revisão** e confirme a geração paga. A liberação preserva
+o registro anterior e depende das provas de identidade e da ausência de saída
+local. No CLI, uma nova linha com ID e nome de saída novos mantém a tentativa
+anterior para auditoria.
 
 CONCLUIDO legado, produzido pelas versões antigas em simulação, não é prova
 de imagem real. Confira os arquivos antes de redefinir manualmente esses itens.
@@ -617,9 +644,25 @@ do arquivo, incluindo subpastas quando necessário. Os aliases distinguem maiús
 de minúsculas, começam com letra e aceitam letras sem acento, números, hífen e
 sublinhado (até 40 caracteres). Não cadastre aliases que diferem apenas pela caixa.
 
-Arquivos sem alias continuam usando `Pasta_Referencias` da aba `Configuracao`;
-essa configuração permanece compatível com planilhas existentes e é dispensada
-no modo de seleção direta.
+Arquivos sem alias são procurados em todas as pastas cadastradas, incluindo
+`Pasta_Referencias` no CLI. Nomes duplicados exigem alias; acentos Unicode
+equivalentes são reconhecidos sem renomear arquivos ou alterar planilhas.
+
+No Studio, basta adicionar as pastas de produtos e referências fixas na tela.
+Em cada linha, preencha `Arquivo_Referencia` com os arquivos que ela deve usar:
+
+| Cenário | Exemplo de `Arquivo_Referencia` |
+| --- | --- |
+| Somente o produto | `produto.jpg` |
+| Produto e referência visual escolhida para aquela linha | `produto.jpg; afeto.jpeg` |
+| Produto e a mesma imagem em todas as linhas | `produto.jpg; campanha.jpeg` (repita `campanha.jpeg` em cada linha desejada) |
+| Mesmo nome de arquivo em duas pastas | `Produtos::foto.jpg; Fixas::foto.jpg` |
+
+Copie o nome completo, com a extensão real (`.jpg`, `.jpeg`, `.png` ou `.webp`).
+Separe arquivos com `;`, sem separador no final. O prefixo opcional usa dois
+dois-pontos (`Alias::arquivo.jpg`). Cadastrar uma pasta não adiciona todas as
+imagens dela à campanha: cada linha usa somente os arquivos que informa.
+
 Caminhos relativos das pastas são resolvidos a partir da pasta da planilha.
 Pastas inexistentes ou aliases duplicados bloqueiam a configuração. Arquivos ausentes,
 aliases desconhecidos e caminhos que escapem da pasta cadastrada são rejeitados.

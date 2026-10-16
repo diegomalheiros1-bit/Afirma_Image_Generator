@@ -404,9 +404,10 @@ class StudioTests(IsolatedTest):
         self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('D2', 'Produtos::ok.png; Marca::ok.png'))
         job = make_job(load_queue(self.queue).iloc[0], self.session.snapshot()[0], True)
         self.assertEqual(job.referencias, (self.refs / 'ok.png', second / 'ok.png'))
-        self.assertEqual(self.session.folder_usage('Marca'), ['1'])
-        with self.assertRaisesRegex(ValueError, 'padrão'):
-            self.session.set_folders([folders[1]], '')
+        # Bare filenames also depend on the registered folders searched now.
+        self.assertEqual(self.session.folder_usage('Marca'), [str(i) for i in range(1, 9)])
+        self.session.set_folders([folders[1]], '')
+        self.assertEqual(self.session.default_folder, '')
         with self.assertRaisesRegex(ValueError, 'duplicado'):
             validate_folders(folders + [{'alias': 'marca', 'path': str(second)}], 'Produtos')
         with self.assertRaisesRegex(ValueError, 'inválido'):
@@ -510,19 +511,20 @@ class StudioTests(IsolatedTest):
                 self.assertEqual(self.api.call_count, calls)
                 self.assertEqual(verified_outputs(outputs, fmt), hashes)
 
-    def test_preflight_detects_duplicates_and_existing_normalized_output(self):
+    def test_preflight_numbers_duplicates_and_existing_normalized_output(self):
         self.edit_queue(lambda b: (b['Fila_Geracao'].__setitem__('E2', 'produto'),
                                    b['Fila_Geracao'].__setitem__('E3', 'produto.jpg')))
         before = digest(self.queue)
-        with self.assertRaisesRegex(ValueError, 'repetido'):
-            self.session.validate_campaign()
+        plan = self.session.validate_campaign()
+        self.assertEqual([Path(j['outputs'][0]).name for j in plan['jobs'][:2]],
+                         ['produto.png', 'produto_02.png'])
         self.assertEqual(digest(self.queue), before)
         self.edit_queue(lambda b: b['Fila_Geracao'].__setitem__('E3', 'outro'))
         self.output.mkdir(parents=True, exist_ok=True)
         target = self.output / 'produto.png'
         target.write_bytes(png_bytes())
-        with self.assertRaisesRegex(ValueError, 'já existe'):
-            self.session.validate_campaign()
+        plan = self.session.validate_campaign()
+        self.assertEqual(Path(plan['jobs'][0]['outputs'][0]).name, 'produto_02.png')
         self.assertEqual(target.read_bytes(), png_bytes())
         self.assertEqual(self.api.call_count, 0)
 

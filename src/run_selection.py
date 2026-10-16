@@ -2,6 +2,7 @@
 from src.job_values import canonical_id, cell_text, parse_quantity, ambiguous_legacy_key
 from src.execution_state import execution_identity, row_fingerprint, ROW_FINGERPRINT_VERSION
 from pathlib import Path
+from src.regeneration import pending_regeneration
 
 MODES = {'pending', 'errors', 'pending_errors', 'resume', 'review'}
 
@@ -20,8 +21,11 @@ def plan_selection(frame, records, config, max_items, max_images, mode='pending'
         phase = record.get('phase')
         category, reason = 'outside', 'Fora da seleção escolhida'
         eligible = False
+        regenerate = pending_regeneration(row, record, config, mode)
         if mode == 'resume' and key not in scope:
             pass
+        elif regenerate:
+            eligible = True
         elif status == 'CONCLUIDO' or phase == 'files_ready':
             category, reason = 'completed', 'Saídas concluídas ou disponíveis para recuperação; preservadas'
         elif phase == 'prepared':
@@ -99,7 +103,11 @@ def plan_selection(frame, records, config, max_items, max_images, mode='pending'
                     selected.append(index)
                     images += count
                     category, reason = 'selected', 'Selecionado para esta execução'
+                    if regenerate:
+                        reason = 'PENDENTE na planilha: gerar novamente, preservando as imagens anteriores'
         decisions.append(dict(id=key, category=category, reason=reason))
+        if regenerate:
+            decisions[-1]['regeneration'] = True
     return dict(indices=selected, selected_ids=[canonical_id(frame.loc[i, 'ID']) for i in selected],
                 images=images, decisions=decisions)
 

@@ -20,6 +20,8 @@ from src.image_generator import (GenerationError, MockImageGenerator, OpenAIImag
                                  OutputStorageError)
 from src.logger import get_logger
 from src.generation_errors import classify_exception, error_message, interruption_reason, sanitize_diagnostic
+from src.output_naming import allocated_paths, prepare_output_allocations
+from src.regeneration import pending_regeneration
 
 QUEUE_PATH = Path("input/fila.xlsx")
 logger = get_logger()
@@ -52,6 +54,7 @@ def make_job(row, config, real):
     paths = (openai_output_paths(config["result_dir"], name, quantity, check_exists=False,
                                 output_format=settings.output_format) if real or config.get("studio") else
              output_paths(config["result_dir"], name, quantity))
+    paths = allocated_paths(paths, config.get('output_allocations', {}).get(canonical_id(row['ID'])))
     attempts = 0 if not cell_text(row["Tentativas"]) else int(row["Tentativas"])
     job = GenerationJob(
         id=canonical_id(row["ID"]), prompt=build_prompt(text("Prompt_Padrao"), text("Prompt_Variacao"),
@@ -94,6 +97,10 @@ def recover(df, journal, queue, config=None):
         if not record and status not in {"PROCESSANDO", "REVISAO"}:
             continue
         phase = record.get("phase") if record else None
+        if config and pending_regeneration(row, record or {}, config):
+            # Returning a completed Studio item to PENDENTE requests new output.
+            # Interrupted/uncertain attempts still follow the recovery flow below.
+            continue
         if phase == 'retry_authorized':
             from src.run_selection import review_evidence
             if config and review_evidence(row, record, config)['releasable']:
@@ -143,6 +150,9 @@ def recover(df, journal, queue, config=None):
                             # Completed history retains its original rendering preferences.
                             recovery_config["image_settings"] = ImageSettings(**record["execution"]["settings"])
                             recovery_config["result_dir"] = Path(record["result_dir"])
+                        if record.get('output_allocation') is not None:
+                            recovery_config['output_allocations'] = {
+                                **recovery_config.get('output_allocations', {}), key: record['output_allocation']}
                         job = make_job(row, recovery_config, True)
                         _, current_signature = execution_identity(job, row)
                         row_valid = (row_valid and current_signature == record.get("execution_fingerprint")
@@ -220,6 +230,8 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
     if ids.eq("").any() or ids.duplicated().any():
         raise ValueError("Cada linha deve ter um ID preenchido e único, estável entre execuções.")
     journal = Journal(queue) if real else None
+    if config.get('studio'):
+        prepare_output_allocations(df, (journal or Journal(queue)).records, config)
     blocked = set()
     if real and not dry:
         blocked = recover(df, journal, queue, config)
@@ -280,10 +292,11 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
             if control:
                 control.event("item", id=key, status="ERRO", message=str(exc))
             if real and not dry:
-                journal.put(key, phase='local_rejected',
-                            error=dict(category='local_validation', exception_type='ValueError', uncertain=False),
-                            local_validation_calls=0)
-                df.at[idx, "Status"] = "ERRO"
+                if not pending_regeneration(row, journal.records.get(key, {}), config):
+                    journal.put(key, phase='local_rejected',
+                                error=dict(category='local_validation', exception_type='ValueError', uncertain=False),
+                                local_validation_calls=0)
+                    df.at[idx, "Status"] = "ERRO"
                 df.at[idx, "Observacao"] = str(exc)
                 save_queue(df, queue)
             continue
@@ -319,12 +332,18 @@ def process_queue(queue, reference_dir, generator, env, overrides=None, control=
         signature_row = dict(row)
         if mode == "direct":
             signature_row["Arquivo_Referencia"] = ""
-        journal.put(key, phase="prepared", fingerprint=fingerprint(job, model, quality),
+        prepared = dict(phase="prepared", fingerprint=fingerprint(job, model, quality),
+                    output_allocation=config.get('output_allocations', {}).get(key),
                     outputs=[str(p) for p in job.saidas], task_attempts=attempts,
                     api_attempts=previous_api, hashes={}, model=model, quality=quality,
                     row_fingerprint=row_fingerprint(signature_row), row_fingerprint_version=ROW_FINGERPRINT_VERSION,
                     execution=execution, execution_fingerprint=execution_fingerprint,
                     result_dir=str(config["result_dir"]))
+        if pending_regeneration(row, journal.records.get(key, {}), config):
+            source = config.get('regeneration_sources', {}).get(key)
+            journal.restart_completed(key, source, **prepared)
+        else:
+            journal.put(key, **prepared)
         df.at[idx, "Status"] = "PROCESSANDO"
         df.at[idx, "Tentativas"] = attempts
         save_queue(df, queue)  # MUST succeed before making a paid request.

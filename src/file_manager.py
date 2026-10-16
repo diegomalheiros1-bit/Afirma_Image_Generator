@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import unicodedata
 
 
 def validate_reference_path(reference_dir: Path, filename: str) -> Path:
@@ -12,6 +13,25 @@ def validate_reference_path(reference_dir: Path, filename: str) -> Path:
     path = (root / filename).resolve()
     if not path.is_relative_to(root):
         raise ValueError("Arquivo_Referencia fora da pasta de referências.")
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise ValueError(f"Extensão de referência não suportada: {filename}")
+    # Resolve each component with Unicode-equivalent accents while retaining
+    # the exact file path for hashing and generation. Never strip accents.
+    relative = path.relative_to(root)
+    path = root
+    for part in relative.parts:
+        key = unicodedata.normalize('NFC', part).casefold()
+        if not path.is_dir():
+            raise FileNotFoundError(f"Imagem de referência não encontrada: {filename}")
+        matches = [p for p in path.iterdir()
+                   if unicodedata.normalize('NFC', p.name).casefold() == key]
+        if len(matches) > 1:
+            raise ValueError(f"Nome de referência ambíguo na mesma pasta: {filename}. Renomeie os arquivos duplicados.")
+        if not matches:
+            raise FileNotFoundError(f"Imagem de referência não encontrada: {filename}")
+        path = matches[0].resolve()
+        if not path.is_relative_to(root):
+            raise ValueError("Arquivo_Referencia fora da pasta de referências.")
     if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
         raise ValueError(f"Extensão de referência não suportada: {filename}")
     if not path.is_file():
@@ -36,7 +56,26 @@ def validate_reference_paths(reference_dir: Path, filenames: str, reference_dirs
             # Aliased names must be relative to the explicitly selected root.
             if Path(name).is_absolute() or Path(name).drive or name.startswith(("/", "\\")):
                 raise ValueError("Use um arquivo relativo à pasta de referência cadastrada.")
-        paths.append(validate_reference_path(root, name))
+            paths.append(validate_reference_path(root, name))
+        else:
+            roots = list(dict.fromkeys(Path(p).resolve() for p in
+                         ([reference_dir] if reference_dir is not None else [])
+                         + list((reference_dirs or {}).values())))
+            if not roots:
+                raise ValueError("Adicione as pastas de referência no programa.")
+            found = []
+            for candidate in roots:
+                try:
+                    path = validate_reference_path(candidate, name)
+                except FileNotFoundError:
+                    continue
+                if path not in found:
+                    found.append(path)
+            if len(found) > 1:
+                raise ValueError(f"Referência encontrada em mais de uma pasta: {name}. Use Alias::{name} para escolher.")
+            if not found:
+                raise FileNotFoundError(f"Imagem de referência não encontrada nas pastas cadastradas: {name}")
+            paths.append(found[0])
     return tuple(paths)
 
 

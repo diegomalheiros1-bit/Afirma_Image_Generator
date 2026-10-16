@@ -14,8 +14,11 @@ class ReferenceFoldersTests(unittest.TestCase):
             x, y = base/'x', base/'y'
             x.mkdir(); y.mkdir()
             (x/'same.png').touch(); (y/'same.png').touch()
-            paths = validate_reference_paths(x, 'same.png; X::same.png; Y::same.png', {'X':x,'Y':y})
-            self.assertEqual(paths, ((x/'same.png').resolve(), (x/'same.png').resolve(), (y/'same.png').resolve()))
+            with self.assertRaisesRegex(ValueError, 'mais de uma pasta'):
+                validate_reference_paths(x, 'same.png', {'X':x,'Y':y})
+            (x/'unique.png').touch()
+            paths = validate_reference_paths(x, 'unique.png; X::same.png; Y::same.png', {'X':x,'Y':y})
+            self.assertEqual(paths, ((x/'unique.png').resolve(), (x/'same.png').resolve(), (y/'same.png').resolve()))
             for value in ['Z::same.png', 'X::../y/same.png', 'X::', 'X::missing.png', str(y/'same.png'), 'X::'+str(x/'same.png')]:
                 with self.subTest(value=value), self.assertRaises((ValueError, FileNotFoundError)):
                     validate_reference_paths(x, value, {'X':x})

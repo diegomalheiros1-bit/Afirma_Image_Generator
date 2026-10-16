@@ -351,8 +351,18 @@ def prepare_diagnostics(root):
             assert window.evaluate_js("document.querySelector('#generation-items').textContent") == 'Até 10'
             assert window.evaluate_js("!q('generation-timeout-guidance').classList.contains('hidden') && !q('generation-confirm').disabled")
             layout("generation-wide-dark")
+            window.evaluate_js("""window.diagnosticRegenerationPlan=JSON.parse(JSON.stringify(generationPlan));
+                diagnosticRegenerationPlan.selection.decisions[0].regeneration=true;
+                renderGenerationDialog(diagnosticRegenerationPlan);""")
+            assert window.evaluate_js("!q('generation-regeneration').classList.contains('hidden') && q('generation-regeneration').textContent.includes('IDs 1:') && !q('generation-confirm').disabled")
+            layout('generation-regeneration-wide-dark')
             window.resize(520, 500)
             wait("innerWidth < 520")
+            layout('generation-regeneration-small-dark')
+            capture('generation-regeneration-small-dark')
+            window.evaluate_js("renderGenerationDialog(generationPlan)")
+            assert window.evaluate_js("q('generation-regeneration').classList.contains('hidden')")
+            report['checks'].append('pending-regeneration-notice-wide-small-no-api')
             layout("generation-small-dark")
             window.evaluate_js("document.querySelector('#generation-dialog').dispatchEvent(new Event('cancel',{cancelable:true}))")
             wait("!document.querySelector('#generation-dialog').open")

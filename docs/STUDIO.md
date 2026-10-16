@@ -82,8 +82,9 @@ rejeitados; o provider envia cópias imutáveis dos bytes validados.
 O Studio precisa somente da aba `Fila_Geracao`. As configurações de geração
 vêm da interface; `Configuracao` e `Pastas_Referencias` não são lidas, mesmo
 quando existem no Excel. Selecione a pasta de saída na tela antes de conferir
-ou gerar. Cadastre as pastas de referência na interface e escolha a padrão
-para arquivos sem alias. Esses cadastros permanecem na sessão ao trocar de
+ou gerar. Cadastre as pastas de referência na interface. Nomes sem prefixo
+são procurados em todas as pastas cadastradas, sem exigir uma padrão.
+Esses cadastros permanecem na sessão ao trocar de
 planilha. O botão de salvar pastas no Excel é uma exportação opcional para
 compatibilidade com o CLI, que continua lendo suas configurações da planilha.
 
@@ -95,16 +96,18 @@ Para uso por linha de comando, a aba opcional `Pastas_Referencias` aceita:
 | Marca | D:\Identidade\Marca |
 
 Exemplo: `Produtos::frente.jpg; Marca::logos\principal.png`.
-No Studio, arquivos sem alias usam a pasta padrão escolhida na interface.
-No CLI, usam `Pasta_Referencias` da aba `Configuracao`.
+Arquivos sem alias são procurados nas pastas cadastradas. Se o mesmo nome existir
+em mais de uma pasta, informe o alias para escolher. Nomes com acentos Unicode
+equivalentes (NFC/NFD) são reconhecidos sem renomear os arquivos. Não são removidos
+acentos nem substituídas extensões: `.jpg` e `.jpeg` precisam corresponder ao arquivo.
+No CLI, a pasta `Pasta_Referencias` também participa dessa busca.
 Aliases começam com letra ASCII e têm até 40 caracteres: letras, números, `_`, `-`.
 Duplicados são rejeitados inclusive quando diferem apenas por maiúsculas.
 O uso do alias é exato, incluindo maiúsculas/minúsculas.
 
 Adicionar/editar abre um seletor nativo de diretórios. O nome curto é informado
 separadamente. Remover consulta os IDs que usam o alias e mostra um aviso; nenhum
-arquivo da pasta é apagado. Para remover a pasta padrão, escolha outra padrão
-explicitamente antes. Arquivos sem alias não são redirecionados silenciosamente.
+arquivo da pasta é apagado. Nomes ambíguos nunca escolhem uma pasta silenciosamente.
 Caminhos finais são resolvidos, incluindo junctions e links: nenhum arquivo pode
 escapar da raiz autorizada. Subpastas dentro dessa raiz são permitidas.
 
@@ -116,6 +119,16 @@ substituição atômica do Excel; atualiza `Pastas_Referencias` e, quando escolh
 Não é necessário salvar o cadastro para simular ou gerar nesta sessão.
 
 ## Parâmetros de imagem
+
+### Nomes de saída
+
+Se o nome já existir ou estiver reservado por outro item da campanha, o Studio
+escolhe o próximo disponível: `produto.png`, `produto_02.png`, `produto_03.png`.
+A conferência mostra o nome efetivo. O Excel mantém o valor original de
+`Nome_Saida`; o histórico registra os caminhos escolhidos antes de chamar a API.
+Retomadas e revisões usam esses caminhos registrados, sem renumerar imagens
+concluídas ou tentativas incertas. Se outro processo ocupar o nome depois da
+preparação do lote, a validação interrompe o item antes de sobrescrever arquivos.
 
 Em **Configurações > Opções avançadas**, o resumo informa a origem da chave
 efetivamente configurada. O formulário fica oculto até **Trocar chave**. Sem chave,
@@ -263,8 +276,8 @@ ao carregar; corrija seu caminho antes de usar o modo planilha.
 ## Revisão independente
 
 No modo de seleção direta, `Pasta_Referencias` pode ficar vazia ou ausente.
-Ao voltar para referências pela planilha, selecione uma pasta padrão se não houver
-uma configuração legada. Trabalhos interrompidos na fase `prepared` participam
+Ao voltar para referências pela planilha, cadastre as pastas que contêm as
+imagens; não é necessário escolher uma padrão. Trabalhos interrompidos na fase `prepared` participam
 da validação e da captura de hashes antes da retomada, mesmo com status
 `PROCESSANDO`, preservando a detecção de alterações nos arquivos.
 
@@ -297,6 +310,13 @@ O aplicativo não altera o Firewall automaticamente. Nesta validação, o usuár
 confirmou a abertura pelo celular sem ser necessário adicionar a regra tentada.
 
 ## Ajuda nas ações e confirmação da geração
+
+Desde a versão 1.0.18, **Gerar pendentes** respeita o retorno de um item já
+concluído para `PENDENTE` na própria planilha. Isso solicita uma nova geração,
+preservando as imagens e o registro anterior. A conferência informa os IDs que
+serão gerados novamente; a geração paga ainda depende da confirmação habitual.
+Para gerar cinco itens de uma imagem juntos, ajuste ambos os limites para cinco.
+Resultados incertos continuam exigindo revisão, mesmo com `PENDENTE` no Excel.
 
 Na versão 1.0.7, escolha **Gerar pendentes**, **Repetir erros** ou **Repetir
 itens em revisão**. A opção combinada saiu do seletor. No histórico, use

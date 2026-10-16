@@ -1,4 +1,4 @@
-# Execução, retomada e histórico — versão 1.0.8
+# Execução, retomada e histórico — versão 1.0.18
 
 ## Selecionar o que executar
 
@@ -8,6 +8,15 @@ imagens são independentes; um item com várias imagens é selecionado inteiro.
 
 - **Gerar pendentes:** itens sem evidência de chamada incerta. Registros
   preparados antes de iniciar uma chamada também podem ser retomados.
+  No Studio, voltar um item concluído para `PENDENTE` na própria planilha
+  solicita uma nova geração, mesmo sem alterar o prompt ou o ID. Não é preciso
+  criar outra planilha. As imagens anteriores recebem proteção contra sobrescrita;
+  as novas usam nomes disponíveis, como `produto_02.png`. O registro anterior é
+  arquivado em `previous_generations` na mesma gravação do novo registro.
+  A prévia identifica as novas gerações e a confirmação paga informa os IDs.
+  Os limites continuam valendo: para cinco itens de uma imagem, configure
+  cinco itens e cinco imagens. `CONCLUIDO`, chamadas incertas e retomadas
+  continuam respeitando seus fluxos de proteção. O comportamento do CLI não muda.
 - **Repetir erros:** rejeições locais cuja validação
   agora passa; rejeições transitórias confirmadas de limite de taxa/sobrecarga;
   erros de parâmetros após alteração das configurações e validação local.

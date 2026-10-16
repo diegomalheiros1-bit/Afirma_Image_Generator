@@ -591,8 +591,6 @@ class StudioSession:
         with self.lock:
             self.idle()
             validate_folders(folders, default)
-            if self.default_folder and not default and self.folders:
-                raise ValueError("Escolha outra pasta padrão antes de remover a pasta padrão atual. Arquivos sem alias não serão redirecionados automaticamente.")
             self.folders, self.default_folder = deepcopy(folders), default
 
     def folder_usage(self, alias):
@@ -605,7 +603,7 @@ class StudioSession:
             for _, row in df.iterrows():
                 for ref in cell_text(row["Arquivo_Referencia"]).split(";"):
                     if (("::" in ref and ref.split("::", 1)[0].strip() == alias) or
-                            alias == self.default_folder and ref.strip() and "::" not in ref):
+                            ref.strip() and "::" not in ref):
                         used.append(str(row["ID"]))
                         break
             return used
@@ -625,7 +623,7 @@ class StudioSession:
             raise ValueError("Escolha a pasta de saída no Studio antes de conferir ou gerar.")
         # The menu is the only configuration source in Studio. CLI keeps its
         # workbook configuration contract for existing command-line workflows.
-        config = dict(studio=True, reference_mode=self.mode, limit=prefs["max_jobs"],
+        config = dict(studio=True, reference_mode=self.mode, selection_mode=self.selection_mode, limit=prefs["max_jobs"],
                       dry_run=True, reference_dirs={}, reference_dir=None,
                       result_dir=Path(prefs["output_dir"]).resolve(),
                       image_settings=ImageSettings(**prefs["image"]))
@@ -634,9 +632,13 @@ class StudioSession:
             config["reference_dirs"] = roots
             config["reference_dir"] = roots[self.default_folder] if self.default_folder else None
             if config["reference_dir"] is None and not roots:
-                raise ValueError("Escolha uma pasta padrão para usar referências pela planilha.")
+                raise ValueError("Adicione as pastas de referência no programa.")
         else:
             config["direct_references"] = validate_photos(self.photos)
+        from src.output_naming import prepare_output_allocations
+        from src.execution_state import Journal
+        prepare_output_allocations(load_queue(self.queue, reference_mode=self.mode),
+                                   Journal(self.queue).records, config)
         return config, prefs
 
     def validate_campaign(self):
@@ -681,6 +683,8 @@ class StudioSession:
             selected += 1
             images += job["quantity"]
         return {"jobs": plan, "settings": asdict(config["image_settings"]),
+                "output_allocations": deepcopy(config.get('output_allocations', {})),
+                "regeneration_sources": deepcopy(config.get('regeneration_sources', {})),
                 "experimental": config["image_settings"].experimental,
                 "selection": {k: v for k, v in selection.items() if k != "indices"},
                 "execution_preview": dict(items=len(selection['selected_ids']), images=selection['images'],
@@ -724,6 +728,8 @@ class StudioSession:
                 raise ValueError("API real bloqueada nesta sessão. A implementação deve ser validada antes da autorização.")
             plan = self.validate_campaign()
             config, prefs = self.snapshot()
+            config['output_allocations'] = deepcopy(plan['output_allocations'])
+            config['regeneration_sources'] = deepcopy(plan['regeneration_sources'])
             if not plan['execution_preview']['items']:
                 raise ValueError('Nenhum item elegível. Confira os motivos na prévia e os itens em revisão.')
             config['selection_mode'] = self.selection_mode

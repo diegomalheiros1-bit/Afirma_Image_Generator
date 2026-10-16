@@ -112,6 +112,20 @@ class Journal:
         except (ValueError, OSError):
             raise PersistenceError("Registro de execução ilegível; restaure o backup antes de gerar.") from None
 
+    def restart_completed(self, key, source, **values):
+        """Archive the prior completed generation in the same atomic journal write."""
+        from copy import deepcopy
+        from src.regeneration import record_token
+        previous = deepcopy(self.records.get(key, {}))
+        if previous.get('phase') != 'files_ready' or record_token(previous) != source:
+            raise PersistenceError('O histórico mudou desde a conferência; nenhuma nova chamada foi iniciada.')
+        history = previous.pop('previous_generations', [])
+        if not isinstance(history, list) or any(not isinstance(item, dict) for item in history):
+            raise PersistenceError('Histórico de gerações anteriores inválido; preserve o registro para revisão.')
+        self.records[key] = dict(previous_generations=[*history, previous],
+                                 regeneration_source=source, **values)
+        self.put(key)
+
     def put(self, key, **values):
         self.records.setdefault(key, {}).update(values)
         temporary = None

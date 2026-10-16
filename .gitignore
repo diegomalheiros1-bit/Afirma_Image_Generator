@@ -13,6 +13,9 @@ input/referencias/*
 !input/referencias/.gitkeep
 *.xlsx.lock
 *.xlsx.state.json
+*.xlsx.studio-run.json
+*.xlsx.studio-runs/
+outputs/
 output/**
 !output/imagens/
 !output/imagens/.gitkeep
