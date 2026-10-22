@@ -64,7 +64,7 @@ def main():
     # Updating the bundle metadata requires renewing its ad-hoc signature.
     # No Developer ID identity or Apple account is used.
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)], check=True)
-    subprocess.run(['/usr/bin/lipo', '-verify_arch', 'arm64', str(executable)], check=True)
+    subprocess.run(['/usr/bin/lipo', str(executable), '-verify_arch', 'arm64'], check=True)
     subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     assert_public_bundle(app)
     verification = release / 'verification'
