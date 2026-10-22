@@ -107,6 +107,13 @@ def prepare_diagnostics(root):
             report['app_version'] = window.evaluate_js('state.app_info.version')
             assert report['app_version'] == APP_VERSION
             assert window.evaluate_js('state.app_mode') == 'desktop'
+            assert window.evaluate_js("q('error').getBoundingClientRect().height===0")
+            window.evaluate_js("report(new Error('Aviso fictício de validação.'))")
+            assert window.evaluate_js("q('error').getBoundingClientRect().height>0 && q('error').textContent.includes('Aviso fictício')")
+            window.evaluate_js("q('error').textContent=''")
+            assert window.evaluate_js("q('error').getBoundingClientRect().height===0")
+            assert window.evaluate_js("[...document.querySelectorAll('.error,.notice')].filter(e=>!e.textContent.trim()).every(e=>getComputedStyle(e).display==='none')")
+            report['checks'].append('empty-messages-take-no-space-show-on-error-and-hide-after-clear')
             assert window.evaluate_js("q('history-data').textContent.includes('Nenhuma execução')")
             assert window.evaluate_js("!q('persistent-history').open")
             click('#history-heading')
@@ -311,11 +318,21 @@ def prepare_diagnostics(root):
             assert session.preferences['timeout'] == 120
             click('#back')
             report['checks'].append('max-timeout-guidance-nonblocking-no-silent-preference-changes')
-            click("#validate")
-            wait("document.querySelector('#plan-dialog').open")
-            assert ".png" in window.evaluate_js("document.querySelector('#plan-data').textContent")
-            report["checks"].append("preflight-normalized-extensions")
-            click("#plan-dialog button")
+            assert window.evaluate_js("!q('validate') && !q('plan-dialog')")
+            click("#selection-preview")
+            wait("q('selection-preview-data').textContent.includes('10 itens selecionados')")
+            assert window.evaluate_js("q('queue-summary').textContent.includes('10 itens nesta execução')")
+            window.evaluate_js("window.diagnosticLimitButton=document.querySelector('.summary-limits');diagnosticLimitButton.focus()")
+            time.sleep(.9)
+            assert window.evaluate_js("document.activeElement===diagnosticLimitButton && document.querySelector('.summary-limits')===diagnosticLimitButton")
+            assert window.evaluate_js("q('selection-preview-data').textContent.includes('10 itens selecionados')")
+            assert all(Path(job['outputs'][0]).suffix == '.png'
+                       for job in session.validate_campaign()['jobs'])
+            click(".summary-limits")
+            wait("document.activeElement === q('max-jobs')")
+            assert window.evaluate_js("!q('settings').classList.contains('hidden')")
+            click("#back")
+            report["checks"].append("automatic-preflight-selection-count-and-limits-shortcut")
             # UI-only paid-flow fixture: the backend keeps allow_api=False and
             # every real start is intercepted before reaching the server.
             window.evaluate_js("""
@@ -330,7 +347,7 @@ def prepare_diagnostics(root):
             wait("!document.querySelector('#real-start').classList.contains('hidden')")
             window.resize(520, 500)
             wait("innerWidth < 520")
-            for button in ('validate', 'start', 'real-start'):
+            for button in ('selection-preview', 'start', 'real-start'):
                 window.evaluate_js(f"document.querySelector('#{button}').scrollIntoView({{block:'center'}});document.querySelector('#{button}').focus()")
                 wait("!document.querySelector('#action-tooltip').classList.contains('hidden')")
                 assert window.evaluate_js("document.querySelector('#action-tooltip').textContent.length") > 40
@@ -393,7 +410,11 @@ def prepare_diagnostics(root):
             assert hashlib.sha256(queue.read_bytes()).hexdigest() == before
             assert not Path(str(queue) + ".state.json").exists()
             report["checks"].append("ten-item-studio-limit-overrides-sheet-one-workbook-unchanged")
+            assert window.evaluate_js("q('success').textContent === '10' && q('errors').textContent === '0' && q('remaining-count').textContent === '0'")
+            assert window.evaluate_js("q('success-label').textContent === 'Simulados'")
+            assert window.evaluate_js("q('bar').parentElement.getAttribute('aria-valuenow') === '100'")
             layout("simulation-finished")
+            window.evaluate_js("q('history-panel').open=true")
             window.evaluate_js("document.querySelector('.run-history').scrollIntoView({block:'start'})")
             layout("log-wide-dark")
             window.resize(520, 500)
@@ -493,7 +514,6 @@ def prepare_diagnostics(root):
             reopened = StudioSession(root / 'reopened-settings.json', allow_api=False, env={})
             reopened.choose_queue(queue)
             assert len(reopened.history()['runs']) == 1
-            run_id = session.run_log['run_id']
             window.evaluate_js("[...q('history-data').querySelectorAll('button')].find(b=>b.textContent==='Retomar lote').click()")
             wait("state.selection_mode==='resume'")
             click('#selection-preview')

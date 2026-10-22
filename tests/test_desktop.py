@@ -141,6 +141,18 @@ class DesktopTests(IsolatedTest):
         with self.assertRaisesRegex(RuntimeError, 'WebView2'):
             self.run_shell('mshtml')
 
+    def test_macos_shell_uses_cocoa_and_requires_wkwebview(self):
+        with patch('src.desktop_app.sys.platform', 'darwin'):
+            view, ready, _ = self.run_shell('wkwebview')
+            self.assertEqual(view.start.call_args.kwargs['gui'], 'cocoa')
+            ready.assert_called_once()
+            with self.assertRaisesRegex(RuntimeError, 'WebKit'):
+                self.run_shell('edgechromium')
+
+    def test_cocoa_dialog_does_not_require_dotnet_invoke(self):
+        native = SimpleNamespace()
+        self.assertEqual(on_ui_thread(SimpleNamespace(native=native), lambda: ['file.xlsx']), ['file.xlsx'])
+
     def test_windowed_logger_works_without_stderr(self):
         from src.logger import get_logger
         old = Path.cwd()

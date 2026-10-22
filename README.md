@@ -6,6 +6,63 @@ Esta é a versão de referência da branch `main`, mantida como principal a part
 de 16/10/2026. O repositório contém o código, os testes e as instruções para
 reproduzir o pacote Windows; campanhas, credenciais e resultados ficam locais.
 
+## Preparação local 1.0.22 — macOS Apple Silicon
+
+Adaptação para janela Cocoa/WKWebView, pastas pelo Finder e armazenamento da
+chave no Chaves do macOS, sem arquivo de chave em texto. O Windows mantém DPAPI
+e WebView2. A compilação Mac usa assinatura técnica ad-hoc, sem certificado
+comercial ou notarização. Destino inicial: Apple Silicon e macOS 15+.
+
+**Ainda não há DMG validado.** A compilação e o teste nativo precisam rodar em
+macOS. O workflow `.github/workflows/macos-package.yml` está preparado,
+mas ainda não foi publicado nem executado no GitHub. Ele só disponibiliza o
+DMG após passar pelo diagnóstico do aplicativo empacotado, sem API paga.
+Consulte [o processo Mac](docs/MACOS.md) e [o guia do cliente](docs/INSTALAR_NO_MAC.txt).
+
+## Correção local 1.0.21
+
+Avisos vazios não ocupam espaço ao abrir o aplicativo. Corrigida a quebra de
+linha que fazia um contêiner vazio ser interpretado como uma mensagem. O
+diagnóstico nativo verifica abertura sem aviso, exibição de erro e limpeza.
+
+## Atualização local 1.0.20
+
+Interface simplificada: a validação é automática, sem o botão Conferir campanha
+ou o modal técnico. Gerar imagens é a ação principal; Simular campanha fica
+como opção secundária. O resumo distingue pendentes, concluídos e erros/revisão,
+mostra o limite da próxima execução e oferece o atalho Ajustar limites.
+O acompanhamento destaca concluídos, erros confirmados e restantes do lote;
+revisões aparecem separadamente e os detalhes ficam recolhidos.
+
+A revisão separa HTML, estilos, scripts e logo; extrai a montagem de jobs e a
+leitura do histórico para módulos próprios; elimina leituras redundantes do
+Excel na conferência e mantém os contratos de recuperação. A prévia é invalidada
+quando sua configuração muda. Há novas regressões HTTP, de seleção e contadores,
+e verificações automáticas preparadas para o GitHub.
+
+Consulte [a arquitetura e os contratos preservados](docs/ARQUITETURA.md).
+Revisão detalhada: [análise técnica de 21/10/2026](docs/REVISAO_2026-10-21.md).
+Validação local: **211 testes Python e 3 testes dos utilitários da interface
+passaram**, com rede externa bloqueada nos testes Python. Análise estática sem
+avisos e dependências consistentes. O diagnóstico nativo da interface passou
+em **118 verificações de layout**.
+Esta revisão permanece local até uma nova publicação autorizada.
+
+## Atualização local 1.0.19
+
+Ao confirmar uma geração real, o Studio verifica automaticamente a conexão com
+a chave selecionada e atualiza o indicador da Home. O teste manual continua
+disponível. Conferir e simular não fazem chamadas de autenticação. A checagem
+roda em segundo plano e não inicia uma imagem adicional. Recusas de conteúdo,
+saldo ou parâmetros não são apresentadas como falhas de conexão.
+
+Esta atualização fica local para validação; a versão publicada de referência
+continua sendo a 1.0.18 até uma nova publicação autorizada.
+
+Validação local: **203 testes offline passaram**, com rede externa bloqueada;
+o pacote Windows passou em **118 verificações de layout** no diagnóstico nativo,
+sem autenticação real nem geração paga.
+
 ## Melhorias da versão 1.0.18
 
 No Studio, retornar um item concluído para `PENDENTE` na própria planilha permite
@@ -88,13 +145,15 @@ Mantenha o terminal aberto. A API paga permanece bloqueada por padrão.
    cada campo principal. Em Opções avançadas, informe a chave se necessário.
 5. Em **O que deseja executar?**, escolha a ação e clique em **Conferir seleção**
    para visualizar os IDs incluídos e os motivos de exclusão.
-6. Use **Conferir campanha** e **Simular campanha** para validar o fluxo local.
+6. A conferência é automática. Se desejar testar o andamento sem gerar imagens,
+   use **Simular campanha**.
 7. Para produzir imagens, use **Gerar imagens — API paga**, confira os IDs do
    modal e confirme. Essa etapa usa sua conta OpenAI e pode gerar cobrança.
 
-Os três botões mostram ajuda ao passar o mouse ou receber foco pelo teclado:
-**Conferir campanha** valida os dados; **Simular campanha** testa o fluxo sem
-chamar a API; **Gerar imagens — API paga** abre uma janela de confirmação.
+Os botões mostram ajuda ao passar o mouse ou receber foco pelo teclado.
+**Conferir seleção** valida os dados e mostra os itens aptos; **Simular campanha**
+testa o fluxo sem chamar a API; **Gerar imagens — API paga** valida a campanha
+e abre uma janela de confirmação.
 Desde a versão **1.0.1**, essa janela mostra o limite efetivo de itens/imagens,
 planilha, modelo, parâmetros e pasta de saída, além do aviso de consumo de
 créditos ou cobrança na conta OpenAI. A execução só começa em **Confirmar e
@@ -250,8 +309,13 @@ ações existentes de aplicar ou salvar. Os links externos abrem no navegador.
 - Em **Opções avançadas**, uma chave configurada aparece como resumo da origem
   (sessão, salva no computador ou externa). O campo fica oculto até **Trocar chave**.
 - Sem chave, escolha **Usar nesta sessão** ou **Salvar protegida neste computador**.
-  Salvar não faz chamadas externas. **Verificar conexão** é uma ação explícita;
-  o resultado não comprova saldo ou acesso à geração e fica somente na sessão.
+  Salvar não faz chamadas externas. A conexão é verificada automaticamente ao
+  iniciar uma geração real: o indicador mostra **Verificando API…** e fica verde
+  quando a autenticação é confirmada. **Verificar conexão** continua disponível
+  para testar manualmente. Conferir e simular não consultam a API. O resultado
+  não comprova saldo ou acesso à geração e fica somente na sessão. Uma verificação
+  inconclusiva (por exemplo, chave sem permissão para listar modelos) não impede
+  a tentativa de geração; uma imagem concluída também confirma a conexão.
 - Cancelar a troca limpa o novo texto; falha de armazenamento preserva a chave
   anterior. Remover a chave salva ou descartar a da sessão afeta apenas essa origem.
   Quando existe uma alternativa, o resumo informa qual passou a ser usada.

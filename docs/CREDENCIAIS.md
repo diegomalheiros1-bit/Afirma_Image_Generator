@@ -28,11 +28,21 @@ sair das configurações ou mudar para Sobre. Uma substituição bem-sucedida in
 a verificação anterior. Respostas atrasadas não podem validar outra credencial.
 Durante verificação ou geração, alteração e remoção são bloqueadas também no backend.
 
-**Verificar conexão** é a única ação que solicita a checagem de autenticação.
-Solicitações simultâneas são deduplicadas. Falhas de autenticação, rede e timeout
+**Verificar conexão** solicita a checagem manual de autenticação. Ao confirmar
+uma geração real, o Studio também faz uma checagem automática com a mesma chave,
+antes da primeira imagem. A Home passa por **Verificando API…** e fica verde
+quando a autenticação é confirmada. Conferir e simular não fazem essa consulta.
+Solicitações manuais simultâneas são deduplicadas. Falhas de autenticação, rede e timeout
 têm mensagens distintas e não apagam a chave. A consulta não gera imagens, não
 consulta saldo e não garante acesso à geração. Mensagens brutas do provedor não
 são retornadas. O resultado não persiste entre sessões.
+
+Uma autenticação recusada impede a geração antes de enviar imagens. Uma checagem
+inconclusiva não bloqueia a chamada de geração: uma chave restrita pode permitir
+editar imagens sem permitir listar modelos. Uma geração concluída também confirma
+a conexão; uma recusa de autenticação durante a geração atualiza o indicador para
+desconectado. Falhas de conteúdo, parâmetros, saldo ou gravação não significam
+que a chave está desconectada.
 
 O armazenamento mantém DPAPI vinculado ao usuário do Windows, com gravação
 atômica. O frontend recebe somente origem/presença e estado da verificação.

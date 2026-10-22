@@ -173,8 +173,8 @@ Uma extensão PNG/JPG/JPEG/WebP diferente é substituída pela selecionada; uma
 compatível é preservada, inclusive `.jpg` para JPEG. Nomes com pontos, como
 `1.01.06.2702.1`, são mantidos e recebem a extensão ao final. Sem extensão de imagem,
 JPEG usa `.jpeg`. O valor de `Nome_Saida` na planilha não é alterado.
-**Conferir campanha** mostra os caminhos finais e bloqueia nomes que passam a
-ser duplicados após o ajuste ou saídas existentes sem histórico confirmado. A API recebe o
+A conferência automática, usada por **Conferir seleção** e pela confirmação de
+geração, valida os caminhos finais e bloqueia conflitos sem histórico confirmado. A API recebe o
 formato e o conteúdo retornado é validado com Pillow antes de gravar. Conteúdo
 inesperado é resultado incerto para revisão; não vira uma imagem de outro formato
 com uma extensão falsa. Criação exclusiva impede sobrescrita.

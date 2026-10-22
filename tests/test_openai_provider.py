@@ -35,6 +35,13 @@ class FakeImages:
 
 
 class OpenAITests(IsolatedTest):
+    def test_generation_client_uses_official_destination_and_no_hidden_retries(self):
+        with patch.dict(os.environ, {'OPENAI_BASE_URL': 'https://untrusted.invalid/v1'}), \
+                patch('openai.OpenAI') as client:
+            OpenAIImageGenerator(api_key='fictional-offline-key', timeout=45)
+        client.assert_called_once_with(api_key='fictional-offline-key',
+            base_url='https://api.openai.com/v1', timeout=45, max_retries=0)
+
     def test_selected_format_adjusts_extension_preserving_product_codes(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

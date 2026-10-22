@@ -1,3 +1,7 @@
-# Native Windows application; browser/CLI use only requirements.txt.
+# Native desktop application; browser/CLI use only requirements.txt.
 -r requirements.txt
 pywebview==6.2.1
+keyring==25.7.0; sys_platform == 'darwin'
+pyobjc-framework-Cocoa>=10.3,<13; sys_platform == 'darwin'
+pyobjc-framework-WebKit>=10.3,<13; sys_platform == 'darwin'
+pyobjc-framework-Security>=10.3,<13; sys_platform == 'darwin'

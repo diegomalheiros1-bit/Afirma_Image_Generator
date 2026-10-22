@@ -4,6 +4,14 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 
 
+def flag(value):
+    """Parse the shared SIM/NAO configuration convention."""
+    value = str(value).strip().upper()
+    if value not in {"SIM", "NAO", "NÃO"}:
+        raise ValueError("Configuração booleana deve ser SIM ou NAO.")
+    return value == "SIM"
+
+
 def cell_text(value):
     return "" if pd.isna(value) else str(value).strip()
 

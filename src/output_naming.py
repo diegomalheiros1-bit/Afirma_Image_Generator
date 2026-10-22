@@ -25,7 +25,7 @@ def allocated_paths(paths, allocation):
 
 def prepare_output_allocations(frame, records, config):
     """Allocate new jobs and requested regenerations; uncertain attempts keep ownership."""
-    from main import make_job
+    from src.job_builder import make_job
     if not config.get('studio'):
         return
     allocations = dict(config.get('output_allocations', {}))

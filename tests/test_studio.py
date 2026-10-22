@@ -1,7 +1,6 @@
 import base64
 from copy import deepcopy
-from dataclasses import asdict, replace
-import hashlib
+from dataclasses import asdict
 import http.client
 import io
 import json
@@ -34,6 +33,47 @@ def image_bytes(fmt):
 
 
 class StudioTests(IsolatedTest):
+    def test_worker_import_failure_finishes_run_instead_of_leaving_active(self):
+        import builtins
+        original_import = builtins.__import__
+
+        def import_module(name, *args, **kwargs):
+            if name == 'main':
+                raise OSError('Falha fictícia ao iniciar o processamento.')
+            return original_import(name, *args, **kwargs)
+
+        with patch('builtins.__import__', side_effect=import_module):
+            self.session.start()
+            self.session.worker.join(5)
+        self.assertFalse(self.session.active)
+        self.assertEqual(self.session.status, 'Erro')
+        self.assertIsNotNone(self.session.run_log['finished_at'])
+        self.assertIn('Falha fictícia', self.session.error)
+
+    def test_switching_from_resume_discards_hidden_run_selection(self):
+        self.session.set_selection('resume', run_id='older-run', ids=['8'])
+        self.session.set_selection('pending', run_id='older-run', ids=['8'])
+        self.assertIsNone(self.session.resume_run_id)
+        self.assertEqual(self.session.explicit_ids, [])
+        self.assertEqual(self.session.validate_campaign()['selection']['selected_ids'], ['1'])
+
+    def test_preflight_uses_one_read_only_workbook_and_journal_snapshot(self):
+        before = digest(self.queue)
+        with patch('src.studio_session.load_queue', wraps=load_queue) as read:
+            plan = self.session.validate_campaign()
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(plan['selection']['selected_ids'], ['1'])
+        self.assertEqual(digest(self.queue), before)
+        self.assertFalse(Path(str(self.queue) + '.state.json').exists())
+
+    def test_open_existing_output_does_not_require_campaign_or_references(self):
+        self.output.mkdir(parents=True, exist_ok=True)
+        self.session.queue = None
+        self.session.folders = []
+        with patch('src.studio_session.os.startfile', create=True) as open_folder:
+            self.session.open_output_folder()
+        open_folder.assert_called_once_with(str(self.output.resolve()), 'explore')
+
     def test_local_image_parameter_and_quota_errors_do_not_change_connection(self):
         self.session.set_api_key('fictional-connection-state-only')
         with patch('src.api_connection.check_api_connection',return_value=dict(status='connected',message='OK')):

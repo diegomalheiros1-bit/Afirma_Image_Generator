@@ -1,7 +1,6 @@
 """SDK failure diagnostics and batch lifecycle, using fake clients only."""
 import base64
 from copy import deepcopy
-import io
 import json
 from pathlib import Path
 import tempfile
@@ -19,7 +18,7 @@ from src.desktop_app import DesktopApp
 from src.execution_state import Journal, digest
 from src.excel_reader import load_queue
 from src.generation_errors import classify_exception, sanitize_diagnostic
-from src.image_generator import GenerationError, OpenAIImageGenerator
+from src.image_generator import OpenAIImageGenerator
 from src.studio_session import StudioSession, RunControl
 from support import IsolatedTest, png_bytes
 import test_stage_three as fixtures

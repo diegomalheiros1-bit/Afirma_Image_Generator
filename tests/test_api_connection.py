@@ -24,6 +24,172 @@ class ConnectionTests(IsolatedTest):
         self.addCleanup(self.temp.cleanup)
         self.session = StudioSession(Path(self.temp.name) / 'preferences.json', env={})
 
+    def campaign(self, *, key=KEY):
+        from test_stage_three import StageThreeTests
+        root = Path(tempfile.mkdtemp(dir=self.temp.name))
+        queue, refs, output = StageThreeTests().make_queue(root,
+            [[1, 'Foto de produto', '', 'ok.png', 'produto.png', 'PENDENTE', 0, '']])
+        session = StudioSession(root / 'settings.json', allow_api=True,
+                                env={'OPENAI_API_KEY': key} if key else {})
+        session.choose_queue(queue)
+        session.set_folders([{'alias': 'Produtos', 'path': str(refs)}], 'Produtos')
+        session.set_preferences({**session.preferences, 'output_dir': str(output), 'safe_mode': False})
+        return session, queue
+
+    def test_real_start_checks_once_in_background_before_generation(self):
+        session, _ = self.campaign()
+        entered, finish = threading.Event(), threading.Event()
+
+        def probe(key):
+            self.assertEqual(key, KEY)
+            entered.set()
+            finish.wait(5)
+            return dict(status='connected', message='Autenticação confirmada.')
+
+        def generate(*args, **kwargs):
+            self.assertEqual(session.state()['api_connection']['status'], 'connected')
+            self.assertEqual(kwargs['env']['OPENAI_API_KEY'], KEY)
+            return dict(success=0, errors=0, processed=0)
+
+        with patch('src.api_connection.check_api_connection', side_effect=probe) as check, \
+                patch('main.main', side_effect=generate) as run:
+            try:
+                session.start(real=True)
+                self.assertTrue(entered.wait(2))
+                state = session.state()
+                self.assertTrue(state['active'])
+                self.assertEqual(state['api_connection']['status'], 'checking')
+                run.assert_not_called()
+                with self.assertRaises(ValueError):
+                    session.start(real=True)
+                with self.assertRaises(ValueError):
+                    session.set_api_key('fictional-new-key-only')
+            finally:
+                finish.set()
+                session.worker.join(5)
+            check.assert_called_once_with(KEY)
+            run.assert_called_once()
+        self.assertEqual(session.state()['api_connection']['status'], 'connected')
+        self.assertTrue(session.state()['api_connection']['checked_at'])
+        self.assertNotIn(KEY, json.dumps(session.state()))
+
+    def test_preview_and_simulation_do_not_probe(self):
+        session, _ = self.campaign()
+        with patch('src.api_connection.check_api_connection') as check:
+            session.validate_campaign()
+            session.start()
+            session.worker.join(5)
+        check.assert_not_called()
+        self.assertEqual(session.state()['api_connection']['status'], 'unverified')
+
+    def test_authentication_failure_or_missing_key_stops_before_generation(self):
+        import hashlib
+        for key in (KEY, None):
+            with self.subTest(key_present=bool(key)):
+                session, queue = self.campaign(key=key)
+                before = hashlib.sha256(queue.read_bytes()).digest()
+                with patch('src.api_connection.check_api_connection', return_value=dict(
+                        status='disconnected', category='authentication', message='Autenticação recusada.')) as check, \
+                        patch('main.main') as run:
+                    session.start(real=True)
+                    session.worker.join(5)
+                    run.assert_not_called()
+                    self.assertEqual(check.call_count, int(bool(key)))
+                self.assertEqual(session.state()['api_connection']['status'], 'disconnected')
+                self.assertEqual(hashlib.sha256(queue.read_bytes()).digest(), before)
+                self.assertFalse(session.active)
+                self.assertFalse(session.run_log['events'])
+                self.assertNotIn(KEY, json.dumps(session.state()))
+
+    def test_inconclusive_probe_does_not_block_image_only_key(self):
+        for category in ('permission', 'limited', 'provider'):
+            with self.subTest(category=category):
+                session, _ = self.campaign()
+                with patch('src.api_connection.check_api_connection', return_value=dict(
+                        status='unverified', category=category, message='Verificação inconclusiva.')), \
+                        patch('main.main', return_value=dict(success=0, errors=0, processed=0)) as run:
+                    session.start(real=True)
+                    session.worker.join(5)
+                    run.assert_called_once()
+                self.assertEqual(session.state()['api_connection']['status'], 'unverified')
+
+    def test_generation_success_confirms_connection_after_inconclusive_probe(self):
+        session, _ = self.campaign()
+
+        def generate(*args, control, **kwargs):
+            control.event('item_start', id='1')
+            control.event('item', id='1', status='CONCLUIDO', message='Sucesso fictício.', api_attempts=1)
+            return dict(success=1, errors=0, processed=1)
+
+        with patch('src.api_connection.check_api_connection', return_value=dict(
+                status='unverified', category='permission', message='Sem permissão de listar modelos.')), \
+                patch('main.main', side_effect=generate):
+            session.start(real=True)
+            session.worker.join(5)
+        self.assertEqual(session.state()['api_connection']['status'], 'connected')
+        self.assertIn('geração', session.state()['api_connection']['message'])
+
+    def test_generation_errors_do_not_confuse_authentication_with_content_or_quota(self):
+        for status, category, code in ((401, 'authentication', 'invalid_api_key'),
+                (400, 'parameters', 'moderation_blocked'), (429, 'limit_quota', 'insufficient_quota'),
+                (None, 'timeout', None), (None, 'storage', None)):
+            with self.subTest(category=category):
+                session, _ = self.campaign()
+
+                def generate(*args, control, **kwargs):
+                    control.event('item', id='1', status='ERRO', message='Falha fictícia.',
+                        diagnostic=dict(category=category, http_status=status, api_code=code))
+                    return dict(success=0, errors=1, processed=1)
+
+                with patch('src.api_connection.check_api_connection', return_value=dict(
+                        status='connected', message='Autenticação confirmada.')), \
+                        patch('main.main', side_effect=generate):
+                    session.start(real=True)
+                    session.worker.join(5)
+                expected = 'disconnected' if status == 401 else 'connected'
+                self.assertEqual(session.state()['api_connection']['status'], expected)
+
+    def test_failed_probe_never_stays_checking_or_leaks_exception(self):
+        session, _ = self.campaign()
+        with patch('src.api_connection.check_api_connection', side_effect=RuntimeError(KEY)), \
+                patch('main.main', return_value=dict(success=0, errors=0, processed=0)):
+            session.start(real=True)
+            session.worker.join(5)
+        self.assertEqual(session.state()['api_connection']['status'], 'unverified')
+        self.assertNotIn(KEY, json.dumps(session.state()))
+
+    def test_unreadable_saved_key_during_start_does_not_probe_or_generate(self):
+        session, _ = self.campaign()
+        with patch.object(session.credential_store, 'read', side_effect=OSError(KEY)), \
+                patch('src.api_connection.check_api_connection') as check, patch('main.main') as run:
+            session.start(real=True)
+            session.worker.join(5)
+        check.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(session.state()['api_connection']['status'], 'disconnected')
+        self.assertNotIn(KEY, json.dumps(session.state()))
+
+    def test_start_during_manual_probe_is_rejected_without_second_check(self):
+        session, _ = self.campaign()
+        entered, finish = threading.Event(), threading.Event()
+
+        def probe(key):
+            entered.set()
+            finish.wait(5)
+            return dict(status='connected', message='OK')
+
+        with patch('src.api_connection.check_api_connection', side_effect=probe) as check:
+            try:
+                session.verify_api_key()
+                self.assertTrue(entered.wait(2))
+                with self.assertRaisesRegex(ValueError, 'verificação'):
+                    session.start(real=True)
+                self.assertIsNone(session.worker)
+            finally:
+                finish.set()
+                session.connection_worker.join(5)
+            check.assert_called_once_with(KEY)
+
     def probe(self, response):
         requests = []
 

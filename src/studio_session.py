@@ -11,14 +11,17 @@ import tempfile
 import threading
 import time
 import uuid
+import sys
+import subprocess
 
 from PIL import Image
+from src.run_history import read_history
 from src.app_info import app_info
 from src.credential_store import CredentialStore
 from src.excel_reader import load_queue
 from src.execution_state import queue_lock, PersistenceError, digest
 from src.image_settings import ImageSettings
-from src.job_values import cell_text, parse_quantity
+from src.job_values import cell_text, parse_quantity, flag
 
 
 def validate_photos(paths):
@@ -147,6 +150,7 @@ class StudioSession:
         self.credential_store = CredentialStore(self.settings_path)
         self._session_api_key = None
         self._credential_revision = 0
+        self._run_credential_revision = None
         self.connection_worker = None
         self._api_connection = dict(status="unverified", message="Verifique a conexão para confirmar sua chave.", checked_at=None)
         self.queue = None
@@ -168,7 +172,6 @@ class StudioSession:
                                 retries=int(defaults.get("OPENAI_RETRIES", 2)),
                                 max_jobs=int(defaults.get("MAX_JOBS_PER_RUN", 1)),
                                 max_images=int(defaults.get("MAX_IMAGES_PER_RUN", 1)))
-        from main import flag
         self.preferences["safe_mode"] = flag(defaults.get("FIRST_RUN_SAFE_MODE", "SIM"))
         self.checked_preferences(self.preferences)
         if self.settings_path.exists():
@@ -189,42 +192,7 @@ class StudioSession:
         self.explicit_ids = []
 
     def history(self):
-        if not self.queue:
-            return {'runs': [], 'warnings': []}
-        paths = list(Path(str(self.queue) + '.studio-runs').glob('*.json'))
-        paths.append(Path(str(self.queue) + '.studio-run.json'))
-        records, warnings = {}, []
-        for path in paths:
-            if not path.exists():
-                continue
-            try:
-                value = json.loads(path.read_text('utf-8'))
-                if not isinstance(value, dict) or not isinstance(value.get('events', []), list):
-                    raise ValueError()
-                if any(not isinstance(e, dict) for e in value.get('events', [])):
-                    raise ValueError()
-                if value.get('run_id') is not None and not isinstance(value['run_id'], str):
-                    raise ValueError()
-                for event in value.get('events', []):
-                    if 'outputs' in event and (not isinstance(event['outputs'], list) or
-                            any(not isinstance(path, str) for path in event['outputs'])):
-                        raise ValueError()
-                    for field in ('diagnostic', 'usage'):
-                        if field in event and not isinstance(event[field], dict):
-                            raise ValueError()
-                for field in ('settings', 'counts', 'result'):
-                    if field in value and not isinstance(value[field], dict):
-                        raise ValueError()
-                for field in ('selected_ids', 'original_selected_ids'):
-                    if field in value and (not isinstance(value[field], list) or
-                            any(not isinstance(key, str) or not key for key in value[field])):
-                        raise ValueError()
-                if 'image' in value.get('settings', {}) and not isinstance(value['settings']['image'], dict):
-                    raise ValueError()
-                records[value.get('run_id') or path.name] = value
-            except (ValueError, OSError):
-                warnings.append('Histórico indisponível ou inválido: ' + path.name)
-        return {'runs': sorted(records.values(), key=lambda r: str(r.get('started_at', '')), reverse=True), 'warnings': warnings}
+        return read_history(self.queue)
 
     def set_selection(self, mode, run_id=None, ids=None):
         with self.lock:
@@ -233,10 +201,11 @@ class StudioSession:
             self.idle()
             if mode not in MODES:
                 raise ValueError('Seleção inválida.')
-            self.selection_mode, self.resume_run_id = mode, run_id
-            self.explicit_ids = [canonical_id(v) for v in (ids or [])]
+            self.selection_mode = mode
+            self.resume_run_id = run_id if mode == 'resume' else None
+            self.explicit_ids = [canonical_id(v) for v in (ids or [])] if mode == 'resume' else []
 
-    def selection(self, config, prefs):
+    def selection(self, config, prefs, *, frame=None, records=None):
         from src.run_selection import plan_selection
         from src.execution_state import Journal
         original = None
@@ -246,8 +215,11 @@ class StudioSession:
                 raise ValueError('Execução de origem indisponível. Selecione outro histórico ou informe os IDs explicitamente.')
             previous = previous or self.run_log or {}
             original = previous.get('original_selected_ids') or previous.get('selected_ids') or self.explicit_ids
-        frame = load_queue(self.queue, reference_mode=self.mode)
-        return plan_selection(frame, Journal(self.queue).records, config, prefs['max_jobs'], prefs['max_images'], self.selection_mode, original)
+        if frame is None:
+            frame = load_queue(self.queue, reference_mode=self.mode)
+        if records is None:
+            records = Journal(self.queue).records
+        return plan_selection(frame, records, config, prefs['max_jobs'], prefs['max_images'], self.selection_mode, original)
 
     def reviews(self):
         from src.execution_state import Journal
@@ -399,6 +371,20 @@ class StudioSession:
         self._credential_revision += 1
         self._api_connection = dict(status="unverified", message="Verifique a conexão para confirmar sua chave.", checked_at=None)
 
+    def _check_api_connection(self, key, revision):
+        """Reuse the bounded authentication probe for manual checks and real starts."""
+        from src.api_connection import check_api_connection
+        try:
+            result = check_api_connection(key)
+        except Exception:
+            # Never publish SDK exceptions, response bodies or credential material.
+            result = dict(status="unverified", category="provider",
+                          message="A conexão não pôde ser confirmada. Tente novamente em instantes.")
+        with self.lock:
+            if revision == self._credential_revision:
+                self._api_connection = {**result, "checked_at": self._stamp()}
+        return result
+
     def verify_api_key(self):
         """Start one bounded probe without blocking UI polling or generating images."""
         with self.lock:
@@ -423,13 +409,7 @@ class StudioSession:
             self._api_connection = dict(status="checking", message="Confirmando a autenticação com a OpenAI…", checked_at=None)
 
             def work():
-                from src.api_connection import check_api_connection
-                result = check_api_connection(key)
-                with self.lock:
-                    # A late response for a replaced/removed key must never turn
-                    # the new credential green or overwrite its current check.
-                    if revision == self._credential_revision:
-                        self._api_connection = {**result, "checked_at": self._stamp()}
+                self._check_api_connection(key, revision)
 
             self.connection_worker = threading.Thread(target=work, name="afirma-key-check", daemon=True)
             self.connection_worker.start()
@@ -483,7 +463,7 @@ class StudioSession:
             if self.queue:
                 self._refresh_queue_summary()
 
-    def _refresh_queue_summary(self, config=None):
+    def _refresh_queue_summary(self):
         if not self.queue:
             self.queue_summary = None
             return
@@ -550,7 +530,6 @@ class StudioSession:
                 raise
             self.items, self.result, self.error = [], {}, ""
             self.selection_mode, self.resume_run_id, self.explicit_ids = "pending", None, []
-            report = Path(str(path) + ".studio-run.json")
             try:
                 self.run_log = next(iter(self.history()['runs']), None)
             except (ValueError, OSError):
@@ -616,6 +595,11 @@ class StudioSession:
             save_folder_sheet(self.queue, self.folders, self.default_folder)
 
     def snapshot(self):
+        config, prefs, _, _ = self._campaign_snapshot()
+        return config, prefs
+
+    def _campaign_snapshot(self):
+        """Read one workbook/journal pair per preflight, shared with selection."""
         if not self.queue:
             raise ValueError("Selecione a planilha da campanha.")
         prefs = self.checked_preferences(self.preferences)
@@ -637,25 +621,25 @@ class StudioSession:
             config["direct_references"] = validate_photos(self.photos)
         from src.output_naming import prepare_output_allocations
         from src.execution_state import Journal
-        prepare_output_allocations(load_queue(self.queue, reference_mode=self.mode),
-                                   Journal(self.queue).records, config)
-        return config, prefs
+        frame = load_queue(self.queue, reference_mode=self.mode)
+        records = Journal(self.queue).records
+        prepare_output_allocations(frame, records, config)
+        return config, prefs, frame, records
 
     def validate_campaign(self):
-        from main import make_job
+        from src.job_builder import make_job
         from src.image_generator import OpenAIImageGenerator
         from src.job_values import canonical_id
-        config, prefs = self.snapshot()
-        df = load_queue(self.queue, reference_mode=self.mode)
+        config, prefs, df, records = self._campaign_snapshot()
         ids = df["ID"].map(canonical_id)
         if ids.eq("").any() or ids.duplicated().any():
             raise ValueError("Cada linha deve ter ID preenchido, único e estável.")
-        from src.execution_state import Journal
-        records = Journal(self.queue).records
-        selection = self.selection(config, prefs)
+        selection = self.selection(config, prefs, frame=df, records=records)
+        candidate_ids = {decision['id'] for decision in selection['decisions']
+                         if decision['category'] in {'selected', 'limit'}}
         errors, plan, outputs = [], [], set()
         for _, row in df.iterrows():
-            if not any(d['id'] == canonical_id(row['ID']) and d['category'] in {'selected', 'limit'} for d in selection['decisions']):
+            if canonical_id(row['ID']) not in candidate_ids:
                 continue
             try:
                 job = make_job(row, config, True)
@@ -665,8 +649,7 @@ class StudioSession:
                 outputs.update(job.saidas)
                 if any(p.exists() or p.is_symlink() for p in job.saidas):
                     # Recovery can prove completed outputs; only block unregistered conflicts here.
-                    from src.execution_state import Journal
-                    if str(job.id) not in Journal(self.queue).records:
+                    if str(job.id) not in records:
                         raise ValueError("Saída já existe sem histórico confirmado; escolha um nome novo.")
                 plan.append({"id": str(job.id), "prompt": job.prompt,
                              "references": [str(p) for p in job.referencias],
@@ -675,13 +658,6 @@ class StudioSession:
                 errors.append(f"ID {row['ID']}: {exc}")
         if errors:
             raise ValueError("\n".join(errors))
-        item_limit = min(prefs["max_jobs"], config["limit"])
-        selected, images = 0, 0
-        for job in plan:
-            if selected >= item_limit or images + job["quantity"] > prefs["max_images"]:
-                continue
-            selected += 1
-            images += job["quantity"]
         return {"jobs": plan, "settings": asdict(config["image_settings"]),
                 "output_allocations": deepcopy(config.get('output_allocations', {})),
                 "regeneration_sources": deepcopy(config.get('regeneration_sources', {})),
@@ -706,6 +682,17 @@ class StudioSession:
                 self._item_clocks[values["id"]] = time.monotonic()
                 self.run_log["events"].append({"at": self._stamp(), "type": "item_start", "id": values["id"]})
             elif kind == "item":
+                if (self.run_log.get('mode') == 'real'
+                        and self._run_credential_revision == self._credential_revision):
+                    diagnostic = values.get('diagnostic') or {}
+                    if diagnostic.get('http_status') == 401 or diagnostic.get('category') == 'authentication':
+                        self._api_connection = dict(status="disconnected", category="authentication",
+                            message="Autenticação recusada durante a geração. Confira a chave da API.",
+                            checked_at=self._stamp())
+                    elif values.get('status') == 'CONCLUIDO' and values.get('api_attempts', 0) > 0:
+                        self._api_connection = dict(status="connected",
+                            message="Comunicação com a OpenAI confirmada durante a geração.",
+                            checked_at=self._stamp())
                 self.items.append(values)
                 started = self._item_clocks.pop(values["id"], None)
                 event = {"at": self._stamp(), "type": "item_end", "id": values["id"],
@@ -726,6 +713,8 @@ class StudioSession:
             self.idle()
             if real and not self.allow_api:
                 raise ValueError("API real bloqueada nesta sessão. A implementação deve ser validada antes da autorização.")
+            if real and self._api_connection['status'] == 'checking':
+                raise ValueError("Aguarde a verificação da conexão terminar antes de iniciar a geração.")
             plan = self.validate_campaign()
             config, prefs = self.snapshot()
             config['output_allocations'] = deepcopy(plan['output_allocations'])
@@ -764,20 +753,40 @@ class StudioSession:
             control = self.control
             environment = dict(self.env) if self.env is not None else None
             session_api_key = self._session_api_key
+            revision = self._credential_revision
+            self._run_credential_revision = revision if real else None
+            if real:
+                self._api_connection = dict(status="checking",
+                    message="Verificando a conexão antes de iniciar a geração…", checked_at=None)
 
             def work():
-                from main import main
                 final_status = 'Erro'
                 try:
+                    from main import main
                     if environment is None and real:
                         from dotenv import dotenv_values
                         effective_env = {**dotenv_values(self.credential_file), **os.environ}
                     else:
                         effective_env = dict(environment or {})
                     if real:
-                        selected_key = session_api_key or self.credential_store.read() or effective_env.get("OPENAI_API_KEY")
-                        if selected_key:
-                            effective_env["OPENAI_API_KEY"] = selected_key
+                        try:
+                            selected_key = session_api_key or self.credential_store.read() or effective_env.get("OPENAI_API_KEY")
+                        except OSError:
+                            with self.lock:
+                                self._api_connection = dict(status="disconnected",
+                                    message="Não foi possível ler a chave protegida. Informe sua chave novamente.", checked_at=None)
+                            raise ValueError("Não foi possível ler a chave protegida. Informe sua chave novamente.") from None
+                        if not selected_key:
+                            with self.lock:
+                                self._api_connection = dict(status="disconnected",
+                                    message="Informe uma chave para conectar sua conta.", checked_at=None)
+                            raise ValueError("Informe uma chave para conectar sua conta.")
+                        effective_env["OPENAI_API_KEY"] = selected_key
+                        connection = self._check_api_connection(selected_key, revision)
+                        if connection.get('category') == 'authentication':
+                            raise ValueError(connection['message'])
+                        # Restricted keys may allow image edits but not /models.
+                        # An inconclusive probe must not prevent the actual call.
                     effective_env.update(IMAGE_PROVIDER="openai" if real else "simulation", DRY_RUN="NAO" if real else "SIM",
                                          FIRST_RUN_SAFE_MODE="SIM" if prefs["safe_mode"] else "NAO",
                                          MAX_JOBS_PER_RUN=str(prefs["max_jobs"]), MAX_IMAGES_PER_RUN=str(prefs["max_images"]),
@@ -791,6 +800,10 @@ class StudioSession:
                         self.error = str(exc) if isinstance(exc, (ValueError, OSError, PersistenceError)) else "Falha local; confira o log sem apagar o histórico."
                 finally:
                     with self.lock:
+                        if (real and revision == self._credential_revision
+                                and self._api_connection['status'] == 'checking'):
+                            self._api_connection = dict(status="unverified",
+                                message="A verificação da conexão não foi concluída nesta execução.", checked_at=None)
                         try:
                             self._refresh_queue_summary()
                         except Exception:
@@ -832,11 +845,16 @@ class StudioSession:
             if self.active and self.run_log and self.run_log.get('output_dir'):
                 path = Path(self.run_log['output_dir'])
             else:
-                config, _ = self.snapshot()
-                path = Path(config['result_dir'])
+                output = self.preferences['output_dir']
+                if not output:
+                    raise ValueError('Escolha a pasta de saída no Studio.')
+                path = Path(output)
             path = path.resolve()
             if not path.is_dir():
                 raise ValueError('A pasta de resultados ainda não existe. Ela será criada ao gerar imagens.')
+            if sys.platform == 'darwin':
+                subprocess.run(['/usr/bin/open', str(path)], check=True, timeout=10)
+                return
             if os.name != 'nt':
                 raise ValueError('A abertura de pasta está disponível no Windows.')
             os.startfile(str(path), 'explore')

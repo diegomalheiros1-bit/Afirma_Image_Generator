@@ -10,17 +10,15 @@ from src.excel_reader import load_config, load_queue, save_queue
 from src.execution_state import (Journal, PersistenceError, fingerprint, queue_lock,
                                  ROW_FINGERPRINT_VERSION, matches_v1, row_fingerprint,
                                  validate_output_directory, verified_outputs)
-from src.execution_state import execution_identity, digest
+from src.execution_state import execution_identity
 from src.image_settings import ImageSettings
-from src.job_values import ambiguous_legacy_key, canonical_id, cell_text, parse_quantity
-from src.prompt_builder import build_prompt
-from src.file_manager import openai_output_paths, output_paths, validate_reference_paths
-from src.generation_job import GenerationJob
+from src.job_values import ambiguous_legacy_key, canonical_id, cell_text, parse_quantity, flag
+from src.job_builder import make_job
 from src.image_generator import (GenerationError, MockImageGenerator, OpenAIImageGenerator,
                                  OutputStorageError)
 from src.logger import get_logger
 from src.generation_errors import classify_exception, error_message, interruption_reason, sanitize_diagnostic
-from src.output_naming import allocated_paths, prepare_output_allocations
+from src.output_naming import prepare_output_allocations
 from src.regeneration import pending_regeneration
 
 QUEUE_PATH = Path("input/fila.xlsx")
@@ -31,46 +29,11 @@ def is_pending(status):
     return isinstance(status, str) and status.strip().upper() == "PENDENTE"
 
 
-def flag(value):
-    value = str(value).strip().upper()
-    if value not in {"SIM", "NAO", "NÃO"}:
-        raise ValueError("Configuração booleana deve ser SIM ou NAO.")
-    return value == "SIM"
-
-
 def positive_limit(env, name, default):
     value = int(env.get(name, default))
     if value <= 0:
         raise ValueError(f"{name} deve ser positivo.")
     return value
-
-
-def make_job(row, config, real):
-    text = lambda name: cell_text(row.get(name))
-    quantity = parse_quantity(row.get("Quantidade"))
-    name = text("Nome_Saida")
-    settings = config.get("image_settings", ImageSettings())
-    mode = config.get("reference_mode", "spreadsheet")
-    paths = (openai_output_paths(config["result_dir"], name, quantity, check_exists=False,
-                                output_format=settings.output_format) if real or config.get("studio") else
-             output_paths(config["result_dir"], name, quantity))
-    paths = allocated_paths(paths, config.get('output_allocations', {}).get(canonical_id(row['ID'])))
-    attempts = 0 if not cell_text(row["Tentativas"]) else int(row["Tentativas"])
-    job = GenerationJob(
-        id=canonical_id(row["ID"]), prompt=build_prompt(text("Prompt_Padrao"), text("Prompt_Variacao"),
-            tema=text("Tema"), produto=text("Produto"), observacao_usuario=text("Observacao_Usuario"),
-            prompt_negativo=text("Prompt_Negativo")),
-        referencias=(tuple(Path(p).resolve() for p in config.get("direct_references", ())) if mode == "direct" else
-                     validate_reference_paths(config["reference_dir"], text("Arquivo_Referencia"), config.get("reference_dirs"))),
-        nome_saida=name, status=text("Status"), tentativas=attempts, quantidade=quantity, saidas=paths,
-        tema=text("Tema"), produto=text("Produto"), cliente=text("Cliente"),
-        prompt_negativo=text("Prompt_Negativo"), observacao_usuario=text("Observacao_Usuario"),
-        settings=settings, reference_mode=mode)
-    hashes = tuple(digest(p) for p in job.referencias)
-    expected = config.get("expected_reference_hashes")
-    if expected is not None and any(expected.get(str(p)) != h for p, h in zip(job.referencias, hashes)):
-        raise ValueError("Foto de referência alterada, movida ou substituída durante a execução; confira a campanha.")
-    return replace(job, reference_hashes=hashes)
 
 
 def recover(df, journal, queue, config=None):

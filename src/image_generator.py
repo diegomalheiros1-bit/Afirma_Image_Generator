@@ -61,7 +61,8 @@ class OpenAIImageGenerator(ImageGenerator):
             if not api_key or not api_key.strip():
                 raise ValueError("OPENAI_API_KEY não configurada.")
             from openai import OpenAI
-            client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
+            client = OpenAI(api_key=api_key, base_url="https://api.openai.com/v1",
+                            timeout=timeout, max_retries=0)
         self.client = client
         self.model, self.quality = self.settings.model, self.settings.quality
         self.retries, self.sleep = retries, sleep

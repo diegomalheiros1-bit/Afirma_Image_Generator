@@ -7,7 +7,7 @@ from src.regeneration import pending_regeneration
 MODES = {'pending', 'errors', 'pending_errors', 'resume', 'review'}
 
 def plan_selection(frame, records, config, max_items, max_images, mode='pending', original_ids=None):
-    from main import make_job
+    from src.job_builder import make_job
     if mode not in MODES:
         raise ValueError('Seleção inválida.')
     if mode == 'resume' and not original_ids:
@@ -113,7 +113,7 @@ def plan_selection(frame, records, config, max_items, max_images, mode='pending'
 
 def review_evidence(row, record, config):
     """Never adopt today's row/configuration as proof of a historical attempt."""
-    from main import make_job
+    from src.job_builder import make_job
     from src.execution_state import verified_outputs
     from pathlib import Path
     result = dict(matching=False, recoverable=False, releasable=False, outputs=[],

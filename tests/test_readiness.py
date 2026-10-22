@@ -57,13 +57,15 @@ class ReadinessTests(IsolatedTest):
 
     def test_worker_refreshes_summary_after_persisted_completion(self):
         self.session.allow_api = True
+        self.session.set_api_key('fictional-readiness-key-only')
         def completed(*args, **kwargs):
             book = load_workbook(self.queue)
             book['Fila_Geracao']['F2'] = 'CONCLUIDO'
             book.save(self.queue)
             book.close()
             return dict(processed=1, success=1, errors=0, ignored=0)
-        with patch('main.main', side_effect=completed):
+        with patch('main.main', side_effect=completed), patch('src.api_connection.check_api_connection',
+                return_value=dict(status='connected', message='Autenticação fictícia confirmada.')):
             self.session.start(real=True)
             self.session.worker.join(5)
         self.assertFalse(self.session.active)

@@ -1,17 +1,19 @@
-"""Windows desktop entry point. Starts no external browser or console window."""
+"""Native desktop entry point for Windows and macOS."""
 import argparse
 import ctypes
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def user_data_dir():
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Afirma Image Studio"
     return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Afirma Image Studio"
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Afirma Image Studio para Windows.")
+    parser = argparse.ArgumentParser(description="Afirma Image Studio.")
     parser.add_argument("--simulation-only", action="store_true", help="Bloqueia a geração paga nesta sessão.")
     parser.add_argument("--self-test", type=Path, metavar="PASTA", help="Executa diagnóstico isolado, sem chave ou API, e fecha a janela.")
     args = parser.parse_args(argv)
@@ -20,8 +22,8 @@ def main(argv=None):
         for name in tuple(os.environ):
             if name.startswith(('OPENAI_', 'AZURE_OPENAI_')):
                 os.environ.pop(name, None)
-    if os.name != "nt":
-        raise RuntimeError("A janela nativa requer Windows.")
+    if os.name != "nt" and sys.platform != "darwin":
+        raise RuntimeError("A janela nativa requer Windows ou macOS.")
     data_dir = args.self_test.resolve() if args.self_test else user_data_dir()
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -31,7 +33,10 @@ def main(argv=None):
         from src.studio_session import StudioSession
         from src.desktop_app import run_desktop
         if args.self_test:
-            from src.desktop_diagnostics import prepare_diagnostics
+            if sys.platform == "darwin":
+                from src.macos_diagnostics import prepare_diagnostics
+            else:
+                from src.desktop_diagnostics import prepare_diagnostics
             session, ready = prepare_diagnostics(data_dir)
         else:
             session = StudioSession(data_dir / "settings.json", allow_api=not args.simulation_only)
@@ -48,10 +53,15 @@ def main(argv=None):
         try:
             (data_dir / "startup-error.txt").write_text(
                 f"Falha ao iniciar Afirma Image Studio ({type(exc).__name__}).\n"
-                "Confira o WebView2 Runtime, as dependências e a pasta de dados.\n", "utf-8")
+                "Confira as dependências e a pasta de dados do aplicativo.\n", "utf-8")
         except OSError:
             pass  # A read-only data folder must still produce the GUI error.
-        if not args.self_test:
+        if not args.self_test and sys.platform == "darwin":
+            import subprocess
+            subprocess.run(['/usr/bin/osascript', '-e',
+                'display alert "Afirma Image Studio" message "Não foi possível iniciar. Consulte startup-error.txt em Library/Application Support/Afirma Image Studio."'],
+                check=False, timeout=60)
+        elif not args.self_test:
             ctypes.windll.user32.MessageBoxW(None,
                 "Não foi possível iniciar o Afirma Image Studio.\n\n"
                 "Extraia o ZIP completo e confira se o Microsoft Edge WebView2 Runtime está instalado.\n"

@@ -1,0 +1,45 @@
+name: Offline quality checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install application dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Static analysis
+        run: python -m pyflakes main.py studio.py desktop.py src scripts tests
+      - name: Offline Python regressions
+        run: python scripts/run_local_tests.py
+      - name: Frontend syntax and pure helpers
+        run: |
+          node --check web/studio.js
+          node --check web/studio-utils.js
+          node --check web/theme.js
+          node --test tests/test_studio_ui.cjs
+      - name: Check patch whitespace
+        run: git diff --check
+      - name: Keep isolated test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-test-logs
+          path: output/local-tests/**/tests.log
+          if-no-files-found: ignore

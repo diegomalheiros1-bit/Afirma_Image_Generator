@@ -13,8 +13,11 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from src.app_info import APP_VERSION
+from studio import WEB_ASSETS
 OUTPUT = ROOT / "output" / "releases"
 NAME = "Afirma-Image-Studio"
+WEB_FILES = [ROOT / 'web/studio.html',
+             *(ROOT / 'web' / filename for filename, _ in WEB_ASSETS.values())]
 
 
 def package_files(destination):
@@ -35,7 +38,7 @@ def main():
     destination = release / NAME
     release.mkdir(parents=True, exist_ok=False)
     command = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed',
-               '--name', NAME, '--add-data', f"{ROOT / 'web' / 'studio.html'};web",
+               '--name', NAME,
                '--hidden-import', 'webview.platforms.winforms',
                '--hidden-import', 'webview.platforms.edgechromium',
                '--distpath', str(release), '--workpath', str(release / 'build'),
@@ -45,6 +48,8 @@ def main():
                    'webview.platforms.qt', 'webview.platforms.gtk', 'webview.platforms.cocoa',
                    'webview.platforms.android', 'webview.platforms.cef', 'tkinter', 'src.native_picker']:
         command.extend(['--exclude-module', module])
+    for path in WEB_FILES:
+        command.extend(['--add-data', f'{path};web'])
     command.append(str(ROOT / 'desktop.py'))
     subprocess.run(command, cwd=ROOT, check=True)
     executable = destination / f'{NAME}.exe'
@@ -66,7 +71,7 @@ def main():
         '4. Selecione SUA planilha, referências e pasta de saída.\n'
         '5. Em Configurações > Opções avançadas, informe SUA chave da API.\n'
         '   Use apenas nesta sessão ou salve protegida para seu usuário do Windows.\n'
-        '6. Confira e simule a campanha antes de confirmar Gerar imagens - API paga.\n'
+        '6. Confira a selecao e os limites. Simular campanha e opcional e nao usa creditos.\n'
         '   A geração real exige confirmação e pode gerar cobrança na sua conta.\n'
         '7. Ao fechar durante uma campanha, é possível cancelar ou aguardar a imagem\n'
         '   atual terminar e salvar o resultado antes de encerrar.\n\n'
@@ -85,7 +90,8 @@ def main():
         'DADOS\nPreferências, chave protegida, logs e cache ficam em:\n'
         r'%LOCALAPPDATA%\Afirma Image Studio' '\n'
         'A chave configurada aparece em resumo; use Trocar chave para inserir outra.\n'
-        'Salvar a chave não verifica conexão; use Verificar conexão explicitamente.\n'
+        'Salvar a chave não verifica conexão. A geração real verifica ao iniciar;\n'
+        'Verificar conexão também permite testar manualmente.\n'
         'Histórico e planilhas permanecem nas pastas escolhidas para a campanha.\n'
         'O pacote não inclui chave, planilha ou imagens reais.\n'
         'O processamento local usa somente 127.0.0.1; não altera o Firewall.\n\n'
@@ -118,7 +124,7 @@ def main():
             package.write(path, path.relative_to(release))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (release / 'SHA256.txt').write_text(f'{digest}  {archive.name}\n', encoding='ascii')
-    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', ROOT / 'web/studio.html', guide, credentials_guide, buttons_guide, responsive_guide,
+    source_files = [ROOT / 'desktop.py', ROOT / 'studio.py', ROOT / 'main.py', *WEB_FILES, guide, credentials_guide, buttons_guide, responsive_guide,
                     *sorted((ROOT / 'src').glob('*.py')), ROOT / 'requirements-desktop.txt',
                     ROOT / 'requirements-build-windows.txt', Path(__file__).resolve()]
     info = {

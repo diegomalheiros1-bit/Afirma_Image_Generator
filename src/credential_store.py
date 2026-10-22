@@ -4,6 +4,8 @@ from ctypes import wintypes
 import os
 from pathlib import Path
 import tempfile
+import sys
+import hashlib
 
 
 class _DataBlob(ctypes.Structure):
@@ -45,6 +47,11 @@ def _dpapi(data, *, decrypt=False):
 
 
 class CredentialStore:
+    def __new__(cls, settings_path):
+        if sys.platform == 'darwin':
+            return MacCredentialStore(settings_path)
+        return super().__new__(cls)
+
     def __init__(self, settings_path):
         self.path = Path(str(settings_path) + ".api-key.dpapi")
 
@@ -80,3 +87,47 @@ class CredentialStore:
 
     def clear(self):
         self.path.unlink(missing_ok=True)
+
+
+class MacCredentialStore:
+    """Use only the macOS Keychain backend, with no plaintext fallback."""
+    def __init__(self, settings_path):
+        identity = str(Path(settings_path).resolve()).encode('utf-8')
+        self.service = 'Afirma Image Studio/' + hashlib.sha256(identity).hexdigest()
+        self.account = 'OpenAI API key'
+        self._present = None
+
+    def _backend(self):
+        from keyring.backends.macOS import Keyring
+        return Keyring()
+
+    def read(self):
+        try:
+            return self._backend().get_password(self.service, self.account)
+        except Exception:
+            raise OSError('Não foi possível acessar o Chaves do macOS. Desbloqueie-o ou use a chave somente nesta sessão.') from None
+
+    def exists(self):
+        if self._present is None:
+            try:
+                self._present = self.read() is not None
+            except OSError:
+                # Keep the UI usable even when Keychain is locked; actual use
+                # still fails closed in read(), with an actionable message.
+                self._present = True
+        return self._present
+
+    def save(self, key):
+        try:
+            self._backend().set_password(self.service, self.account, key)
+            self._present = True
+        except Exception:
+            raise OSError('Não foi possível salvar no Chaves do macOS. Use a chave somente nesta sessão.') from None
+
+    def clear(self):
+        if self.exists():
+            try:
+                self._backend().delete_password(self.service, self.account)
+                self._present = False
+            except Exception:
+                raise OSError('Não foi possível remover a chave do Chaves do macOS.') from None

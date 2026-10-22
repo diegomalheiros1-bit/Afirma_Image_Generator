@@ -1,6 +1,7 @@
-"""Native Windows shell over the same authenticated, loopback-only Studio."""
+"""Native shell over the same authenticated, loopback-only Studio."""
 from pathlib import Path
 import threading
+import sys
 
 
 MIN_SIZE = (520, 500)
@@ -9,7 +10,7 @@ MIN_SIZE = (520, 500)
 def on_ui_thread(window, callback):
     """Owned Windows dialogs must run on the form's STA thread."""
     native = getattr(window, "native", None)
-    if native is not None and native.InvokeRequired:
+    if native is not None and getattr(native, 'InvokeRequired', False):
         from System import Action
         result = {}
         native.Invoke(Action(lambda: result.update(value=callback())))
@@ -97,18 +98,20 @@ def run_desktop(session, *, data_dir, on_ready=None, webview_module=None):
 
         engine = {"supported": False}
 
+        macos = sys.platform == 'darwin'
+
         def require_webview2(renderer):
-            engine["supported"] = renderer == "edgechromium"
+            engine["supported"] = renderer == ('wkwebview' if macos else 'edgechromium')
             return engine["supported"]
 
         app.window.events.initialized += require_webview2
         if on_ready:
             app.window.events.loaded += lambda: on_ready(app)
-        webview.start(gui="edgechromium", debug=False, private_mode=True,
+        webview.start(gui="cocoa" if macos else "edgechromium", debug=False, private_mode=True,
                       storage_path=str(Path(data_dir) / "webview-cache"),
                       localization={"global.ok": "OK", "global.cancel": "Cancelar"})
         if not engine["supported"]:
-            raise RuntimeError("O Microsoft Edge WebView2 Runtime é necessário.")
+            raise RuntimeError("O WebKit do macOS é necessário." if macos else "O Microsoft Edge WebView2 Runtime é necessário.")
     finally:
         server.shutdown()
         server.server_close()

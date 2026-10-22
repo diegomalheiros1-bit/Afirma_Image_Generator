@@ -18,6 +18,13 @@ from PIL import Image, ImageOps
 from src.studio_session import StudioSession
 
 ROOT = Path(__file__).resolve().parent
+WEB_ASSETS = {
+    "/assets/studio.css": ("studio.css", "text/css; charset=utf-8"),
+    "/assets/studio.js": ("studio.js", "text/javascript; charset=utf-8"),
+    "/assets/studio-utils.js": ("studio-utils.js", "text/javascript; charset=utf-8"),
+    "/assets/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
+    "/assets/brand.png": ("brand.png", "image/png"),
+}
 
 
 def native_select(kind):
@@ -93,12 +100,15 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                self.authorize(require_token=self.path != "/")
+                self.authorize(require_token=self.path != "/" and self.path not in WEB_ASSETS)
                 if self.path == "/":
                     html = (ROOT / "web" / "studio.html").read_text("utf-8")
                     self.respond(200, html.replace("__SESSION_TOKEN__", token).encode(), "text/html; charset=utf-8")
                 elif self.path == "/api/state":
                     self.respond(200, session.state())
+                elif self.path in WEB_ASSETS:
+                    filename, content_type = WEB_ASSETS[self.path]
+                    self.respond(200, (ROOT / "web" / filename).read_bytes(), content_type)
                 else:
                     self.respond(404, {"error": "Recurso inexistente."})
             except PermissionError as exc:
@@ -111,6 +121,8 @@ def make_server(session, port=0, picker=native_select, *, host="127.0.0.1"):
                 if not 0 < length <= 1000000:
                     raise ValueError("Pedido inválido ou grande demais.")
                 data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    raise ValueError("Pedido inválido: envie um objeto JSON.")
                 result = {}
                 with session.lock:
                     if self.path == "/api/select":

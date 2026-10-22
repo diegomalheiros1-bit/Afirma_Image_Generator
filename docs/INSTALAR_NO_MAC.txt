@@ -1,0 +1,28 @@
+AFIRMA IMAGE STUDIO — APPLE SILICON
+
+Para Mac com chip Apple M1, M2 ou posterior, macOS 15 ou posterior.
+Não requer instalação de Python. Internet e sua chave OpenAI são necessárias
+para geração real; simular não usa créditos.
+
+1. Abra o arquivo DMG.
+2. Arraste Afirma Image Studio para Applications (Aplicativos).
+3. Abra o Afirma pela pasta Aplicativos.
+4. Se o macOS avisar que não pode verificar o desenvolvedor, confira a origem
+   do pacote. Para autorizar este aplicativo: Ajustes do Sistema > Privacidade
+   e Segurança > Abrir Mesmo Assim. Confirme quando solicitado.
+   Não é necessário desativar a proteção geral do Mac ou usar o Terminal.
+5. Selecione sua planilha, as pastas de referências e a pasta de resultados.
+   Caminhos antigos do Windows precisam ser selecionados novamente no Mac.
+6. Nas configurações, informe sua chave OpenAI. Você pode usar somente na
+   sessão ou salvar no Chaves do macOS. Autorize o acesso se solicitado.
+7. Confira os itens e confirme a geração. Geração real consome créditos da
+   sua conta. Mantenha o aplicativo aberto durante o processamento.
+
+O aplicativo não possui certificado comercial nem notarização da Apple.
+Há assinatura técnica ad-hoc exigida pelo Apple Silicon, sem conta paga.
+Se o macOS indicar malware ou arquivo danificado, não desative as proteções:
+entre em contato com o suporte para verificar o pacote.
+
+Preferências e logs: ~/Library/Application Support/Afirma Image Studio
+Histórico das campanhas: junto da planilha escolhida.
+O pacote não inclui chave, planilhas ou imagens de clientes.

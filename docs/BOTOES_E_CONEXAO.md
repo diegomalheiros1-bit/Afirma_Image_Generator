@@ -1,4 +1,19 @@
-# Botões e indicador de conexão — versão 1.0.10
+# Botões e indicador de conexão — versão 1.0.20
+
+## Fluxo simplificado
+
+O botão **Conferir campanha** e seu modal técnico foram removidos. A validação
+continua automática em **Conferir seleção**, na confirmação paga e no início.
+**Gerar imagens — API paga** tem destaque; **Simular campanha** é secundário.
+O resumo da planilha mostra o limite da execução com o atalho **Ajustar limites**.
+Para erros e revisões, a quantidade apta aparece após conferir a seleção, evitando
+apresentar o número de pendentes como se fosse o lote de erros selecionado.
+
+O acompanhamento destaca **Concluídos**, **Erros confirmados** e **Restantes neste
+lote**. Restantes inclui o item ativo e os que ainda não começaram; não inclui
+erros ou revisões já encerrados. Revisões têm aviso separado e não são contadas
+como erros confirmados. Simulações usam o rótulo **Simulados**. Planejados,
+iniciados e aguardando início permanecem em **Detalhes do lote**.
 
 ## Ações e cores
 
@@ -50,15 +65,21 @@ automático. O encerramento não é publicado antes da tentativa de persistênci
 
 | Luz e texto | Significado |
 | --- | --- |
-| Verde — API conectada | A última verificação explícita da chave ativa confirmou autenticação. |
+| Verde — API conectada | Uma verificação manual, a checagem ao iniciar a geração ou uma geração concluída confirmou a conexão da chave ativa. |
 | Vermelho — API desconectada | Nenhuma chave configurada ou última checagem com falha de autenticação, conexão ou timeout. |
 | Cinza — API não verificada | Chave configurada sem verificação válida; inclui checagem inconclusiva por limite, permissão ou falha do provedor. |
-| Âmbar — Verificando API… | Checagem explícita em andamento. A animação respeita redução de movimento. |
+| Âmbar — Verificando API… | Checagem manual ou automática ao iniciar uma geração real. A animação respeita redução de movimento. |
 
 O tooltip, acessível por mouse e teclado, explica o estado e inclui o horário
 quando disponível. Clicar abre a seção de conexão sem verificar automaticamente.
 Home e Configurações leem o mesmo estado. Não há monitoramento de rede, consulta
 periódica de autenticação nem consulta de saldo.
+
+Confirmar **Gerar imagens — API paga** inicia uma checagem de autenticação em
+segundo plano, antes da primeira imagem, sem bloquear a interface. Conferir,
+simular e abrir a Home não iniciam essa consulta. Autenticação recusada impede
+o envio da primeira imagem; permissão de listagem, limite ou falha inconclusiva
+na checagem não impedem a chamada real de geração.
 
 O verde não garante disponibilidade contínua, saldo ou acesso ao modelo.
 Trocar/remover chave invalida o resultado anterior; reabrir inicia sem verificação.
