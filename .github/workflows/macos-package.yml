@@ -30,15 +30,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Afirma-Mac-Apple-Silicon
-          path: |
-            output/releases-macos/**/*.dmg
-            output/releases-macos/**/SHA256.txt
-            output/releases-macos/**/build-info.json
+          path: output/macos-installer/*
           if-no-files-found: error
       - name: Keep diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Mac-diagnostics
-          path: output/releases-macos/**/verification/diagnostics.json
+          path: output/macos-verification/diagnostics.json
           if-no-files-found: ignore

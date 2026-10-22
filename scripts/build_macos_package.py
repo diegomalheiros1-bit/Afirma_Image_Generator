@@ -68,8 +68,15 @@ def main():
     subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     assert_public_bundle(app)
     verification = release / 'verification'
-    subprocess.run([str(executable), '--self-test', str(verification)],
-                   cwd=release, env=env, check=True, timeout=180)
+    diagnostics_output = ROOT / 'output' / 'macos-verification'
+    diagnostics_output.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run([str(executable), '--self-test', str(verification)],
+                       cwd=release, env=env, check=True, timeout=180)
+    finally:
+        report = verification / 'diagnostics.json'
+        if report.is_file():
+            shutil.copyfile(report, diagnostics_output / 'diagnostics.json')
     diagnostics = json.loads((verification / 'diagnostics.json').read_text('utf-8'))
     if not diagnostics.get('passed'):
         raise RuntimeError('Diagnóstico nativo falhou; DMG não criado.')
@@ -90,6 +97,13 @@ def main():
         'native_diagnostics_passed': True, 'sha256': digest,
         'checks': diagnostics['checks'],
     }, indent=2), encoding='utf-8')
+    # Keep upload globs away from installer/Applications, a symlink to the
+    # runner's entire Applications directory. Publish only these flat files.
+    public = ROOT / 'output' / 'macos-installer'
+    public.mkdir(parents=True, exist_ok=True)
+    for path in [dmg, release / 'SHA256.txt', release / 'build-info.json']:
+        shutil.copyfile(path, public / path.name)
+    shutil.copyfile(ROOT / 'docs' / 'INSTALAR_NO_MAC.txt', public / 'LEIA-ME.txt')
     print(f'DMG={dmg}\nSHA256={digest}')
 
 
