@@ -1,13 +1,20 @@
 # Build macOS Apple Silicon
 
 Destino inicial: Mac M1/M2 ou posterior, macOS 15+. Preparado a partir da
-versão Windows 1.0.21. Esta preparação ainda exige execução e validação em Mac.
-Não apresenta testes simulados no Windows como prova de funcionamento nativo.
+versão Windows 1.0.21. Build ARM64 e diagnóstico nativo passaram no macOS 15.7.9
+em 22/10/2026. Branch de entrega: `codex/macos-installer`; `main` preservada.
 
 Validação local em 22/10/2026: 219 testes Python passaram com rede externa
 bloqueada, 3 testes JavaScript passaram, análise estática sem avisos e
 dependências Windows consistentes. Diagnóstico nativo Windows passou após a
-adaptação. A compilação Mac, os testes WKWebView e o DMG permanecem pendentes.
+adaptação. No GitHub, a suíte geral também passou em ambiente limpo. O teste
+WKWebView passou com três tamanhos e simulação; assinatura ad-hoc, arquitetura
+ARM64 e integridade do DMG foram verificadas no Mac de compilação.
+
+Build validada: commit `4a2f562622cda01b9f04aaed39ad6ae38960610f`,
+[execução 39827989759](https://github.com/diegomalheiros1-bit/Afirma_Image_Generator/actions/runs/39827989759).
+SHA256 do DMG: `418347b7236f0f50f45504f1266e5245cb83cb9d28c41fd1cd14d8dc64655c5b`.
+Tamanho: aproximadamente 39,3 MiB. A cópia baixada para entrega teve o mesmo hash.
 
 ## Compilação
 

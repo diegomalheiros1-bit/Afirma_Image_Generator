@@ -6,17 +6,23 @@ Esta é a versão de referência da branch `main`, mantida como principal a part
 de 16/10/2026. O repositório contém o código, os testes e as instruções para
 reproduzir o pacote Windows; campanhas, credenciais e resultados ficam locais.
 
-## Preparação local 1.0.22 — macOS Apple Silicon
+## Versão Mac 1.0.22 — Apple Silicon
 
 Adaptação para janela Cocoa/WKWebView, pastas pelo Finder e armazenamento da
 chave no Chaves do macOS, sem arquivo de chave em texto. O Windows mantém DPAPI
 e WebView2. A compilação Mac usa assinatura técnica ad-hoc, sem certificado
 comercial ou notarização. Destino inicial: Apple Silicon e macOS 15+.
 
-**Ainda não há DMG validado.** A compilação e o teste nativo precisam rodar em
-macOS. O workflow `.github/workflows/macos-package.yml` está preparado,
-mas ainda não foi publicado nem executado no GitHub. Ele só disponibiliza o
-DMG após passar pelo diagnóstico do aplicativo empacotado, sem API paga.
+Disponível na branch `codex/macos-installer`; a versão principal permanece na
+`main`. Compilação ARM64 e diagnóstico do aplicativo empacotado passaram em
+macOS 15.7.9: inicialização WKWebView, layout em três tamanhos e simulação com
+Excel/referência. DMG verificado pelo macOS; 219 testes Python e 3 testes
+JavaScript também passaram em ambiente limpo. Nenhuma geração paga foi feita.
+
+[Compilação e artefato Mac](https://github.com/diegomalheiros1-bit/Afirma_Image_Generator/actions/runs/39827989759).
+O pacote usa assinatura ad-hoc e requer a autorização inicial do usuário no
+macOS. Os diálogos de primeira instalação e o acesso real ao Chaves devem ser
+conferidos na máquina de destino, conforme o guia de instalação.
 Consulte [o processo Mac](docs/MACOS.md) e [o guia do cliente](docs/INSTALAR_NO_MAC.txt).
 
 ## Correção local 1.0.21
