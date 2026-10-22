@@ -52,20 +52,24 @@ def prepare_diagnostics(root):
 
     def ready(app):
         report = {'passed': False, 'checks': [], 'engine': app.window.gui.renderer}
+        def evaluate(expression):
+            # evaluate_js wraps code in eval(), blocked by the app CSP in
+            # WKWebView. Native run_js evaluates directly, preserving the CSP.
+            return json.loads(app.window.run_js(f'JSON.stringify({expression})'))
         try:
             assert report['engine'] == 'wkwebview'
             deadline = time.monotonic() + 30
-            while not app.window.evaluate_js("typeof state !== 'undefined' && state !== null"):
+            while not evaluate("typeof state !== 'undefined' && state !== null"):
                 if time.monotonic() > deadline:
                     raise AssertionError('UI did not initialize')
                 time.sleep(.2)
-            assert app.window.evaluate_js("q('error').getBoundingClientRect().height === 0")
-            assert app.window.evaluate_js("state.app_mode === 'desktop' && !state.allow_api")
+            assert evaluate("q('error').getBoundingClientRect().height === 0")
+            assert evaluate("state.app_mode === 'desktop' && !state.allow_api")
             report['checks'].append('wkwebview-loaded-empty-error-hidden-api-disabled')
             for width, height in [(1280, 800), (720, 700), (520, 650)]:
                 app.window.resize(width, height)
                 time.sleep(.4)
-                assert app.window.evaluate_js('document.documentElement.scrollWidth <= innerWidth + 1')
+                assert evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
             report['checks'].append('responsive-layout-three-sizes')
             session.start(real=False)
             session.worker.join(60)

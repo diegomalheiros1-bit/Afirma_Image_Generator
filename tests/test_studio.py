@@ -389,7 +389,8 @@ class StudioTests(IsolatedTest):
         self.session.set_mode('direct')
         self.session.add_photos([self.refs / 'ok.png'])
         plan = self.session.validate_campaign()
-        self.assertTrue(all(job['references'] == [str(self.refs / 'ok.png')] for job in plan['jobs']))
+        self.assertTrue(all([Path(p).resolve() for p in job['references']] ==
+                            [(self.refs / 'ok.png').resolve()] for job in plan['jobs']))
         self.edit_queue(lambda b: b['Fila_Geracao'].delete_cols(4))
         self.assertEqual(len(self.session.validate_campaign()['jobs']), 8)
         result = main(self.queue, env={**self.env, 'DRY_RUN': 'SIM'}, overrides=self.session.snapshot()[0])
@@ -780,7 +781,7 @@ class StudioTests(IsolatedTest):
         self.assertEqual(selected["paths"], [str(self.queue)])
         status, state = request("/api/state")
         self.assertEqual(status, 200)
-        self.assertEqual(state["queue"], str(self.queue))
+        self.assertEqual(Path(state["queue"]).resolve(), self.queue.resolve())
         self.assertEqual(state["queue_summary"]["pending_items"], 8)
         self.assertEqual(state["queue_summary"]["execution_items"], 1)
         self.assertEqual(state["queue_summary"]["execution_images"], 1)
